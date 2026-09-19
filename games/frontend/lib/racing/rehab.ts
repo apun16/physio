@@ -49,7 +49,6 @@ export function saveLevel(level: number) {
 export interface SessionSummary {
   date: string;
   level: number;
-  source: "sensor" | "keyboard";
   durationSec: number;
   coins: number;
   coinsOffered: number;
@@ -61,7 +60,7 @@ export interface SessionSummary {
   smoothness: number;
   /** completed side-to-side sweeps */
   sweeps: number;
-  /** peak forearm rotation reached each way, degrees (sensor only) */
+  /** peak forearm rotation reached each way, degrees */
   peakRightDeg: number;
   peakLeftDeg: number;
   signalDrops: number;
@@ -100,10 +99,10 @@ export class RehabRecorder {
   private peakLeft = 0;
   private drops = 0;
 
-  constructor(private profile: RehabProfile, private source: "sensor" | "keyboard") {}
+  constructor(private profile: RehabProfile) {}
 
-  /** Call once per running frame. `rollDeg` is null when driving with the keyboard. */
-  update(dt: number, x: number, steer: number, rollDeg: number | null) {
+  /** Call once per running frame. `steer` is in game space (+ = right). */
+  update(dt: number, x: number, steer: number, rollDeg: number) {
     if (dt <= 0) return;
     this.time += dt;
     if (Math.abs(x) <= ROAD_HALF_WIDTH) this.roadTime += dt;
@@ -122,10 +121,8 @@ export class RehabRecorder {
     if (this.side !== 0 && nextSide !== this.side) this.sweeps += 1;
     this.side = nextSide;
 
-    if (rollDeg !== null) {
-      if (steer > 0) this.peakRight = Math.max(this.peakRight, Math.abs(rollDeg));
-      if (steer < 0) this.peakLeft = Math.max(this.peakLeft, Math.abs(rollDeg));
-    }
+    if (steer > 0) this.peakRight = Math.max(this.peakRight, Math.abs(rollDeg));
+    if (steer < 0) this.peakLeft = Math.max(this.peakLeft, Math.abs(rollDeg));
   }
 
   signalDropped() {
@@ -138,7 +135,6 @@ export class RehabRecorder {
     return {
       date: new Date().toISOString(),
       level: this.profile.level,
-      source: this.source,
       durationSec: this.time,
       coins,
       coinsOffered,

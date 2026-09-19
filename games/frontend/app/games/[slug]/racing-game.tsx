@@ -58,7 +58,6 @@ export default function RacingGame() {
     const context = canvas.getContext("2d");
     if (!context) return;
 
-    const keys = new Set<string>();
     let frame = 0;
     let last = performance.now();
     let x = 0;
@@ -74,14 +73,13 @@ export default function RacingGame() {
     let previousReset = resetRef.current;
     const collectedCoins = new Set<number>();
 
+    // The keyboard no longer steers; space only pauses. Resuming goes through the button so the sensor check applies.
     const press = (event: KeyboardEvent) => {
-      if (["ArrowLeft", "ArrowRight", "a", "d", "A", "D", " "].includes(event.key)) event.preventDefault();
-      keys.add(event.key.toLowerCase());
-      if (event.key === " " && !finished) setRunning((value) => !value);
+      if (event.key !== " ") return;
+      event.preventDefault();
+      if (runningRef.current) setRunning(false);
     };
-    const release = (event: KeyboardEvent) => keys.delete(event.key.toLowerCase());
     window.addEventListener("keydown", press);
-    window.addEventListener("keyup", release);
 
     const pixelRect = (px: number, py: number, width: number, height: number, color: string) => {
       context.fillStyle = color;
@@ -138,9 +136,8 @@ export default function RacingGame() {
       }
 
       const rehab = profileRef.current;
-      const usingSensor = sensor.status === "connected";
       const sensorLive = sensor.isLive(now);
-      if (usingSensor && !sensorLive && wasLive && runningRef.current) {
+      if (!sensorLive && wasLive && runningRef.current) {
         // Safe loss-of-signal: stop the car rather than let it drift with a stale reading.
         recorder?.signalDropped();
         runningRef.current = false;
@@ -153,19 +150,14 @@ export default function RacingGame() {
         const offRoad = Math.abs(x) > ROAD_HALF_WIDTH;
         const targetSpeed = offRoad ? 118 : 245;
         speed += (targetSpeed - speed) * Math.min(1, dt * (offRoad ? 4.5 : 2.2));
-        recorder ??= new RehabRecorder(rehab, usingSensor ? "sensor" : "keyboard");
+        recorder ??= new RehabRecorder(rehab);
         const frame = sensor.latest;
-        if (usingSensor) {
-          // Wrist angle maps straight to lateral position: reaching a lane needs that share of the calibrated range.
-          // Without a fresh reading the car holds its line instead of following stale data.
-          if (frame && sensorLive) x += (frame.steer - x) * Math.min(1, dt * 8);
-        } else {
-          const steering = Number(keys.has("arrowright") || keys.has("d")) - Number(keys.has("arrowleft") || keys.has("a"));
-          x += steering * dt * (1.15 + speed / 360);
-          x *= 1 - dt * .15;
-        }
+        // IMU steer is +1 = left, -1 = right; the game's x axis is +right.
+        // The wrist angle maps straight to lateral position, so reaching a lane needs that share of the calibrated range.
+        // Without a fresh reading the car holds its line instead of following stale data.
+        if (frame && sensorLive) x += (-frame.steer - x) * Math.min(1, dt * 8);
         x = Math.max(-1.35, Math.min(1.35, x));
-        recorder.update(dt, x, frame && usingSensor ? frame.steer : x, frame && usingSensor ? frame.roll : null);
+        recorder.update(dt, x, frame ? -frame.steer : 0, frame ? frame.roll : 0);
         distance += speed * dt;
         elapsed += dt;
         pickupFlash = Math.max(0, pickupFlash - dt);
@@ -176,7 +168,7 @@ export default function RacingGame() {
           finished = true;
           runningRef.current = false;
           setRunning(false);
-          const result = (recorder ?? new RehabRecorder(rehab, "keyboard")).summarize(coins, distance, COIN_SPACING);
+          const result = (recorder ?? new RehabRecorder(rehab)).summarize(coins, distance, COIN_SPACING);
           saveSession(result);
           setSummary(result);
         }
@@ -369,7 +361,6 @@ export default function RacingGame() {
     return () => {
       cancelAnimationFrame(animation);
       window.removeEventListener("keydown", press);
-      window.removeEventListener("keyup", release);
     };
   }, [sensor]);
 
@@ -382,6 +373,10 @@ export default function RacingGame() {
   };
 
   const startRace = () => {
+    if (sensorStatus !== "connected") {
+      void sensor.connect();
+      return;
+    }
     setSignalLost(false);
     setRunning(true);
   };
@@ -408,7 +403,7 @@ export default function RacingGame() {
       <section className="race-shell">
         <div className="race-command-frame" aria-hidden="true"><i /><i /><i /><i /></div>
         <div className="race-side-readout input-readout">
-          <span>INPUT VECTOR</span><b>{running ? "LIVE" : "STANDBY"}</b><small>IMU // MANUAL</small>
+          <span>INPUT VECTOR</span><b>{running ? "LIVE" : "STANDBY"}</b><small>IMU // STEER</small>
         </div>
         <div className="race-side-readout sync-readout">
           <span>COURSE SYNC</span><b>{Math.max(1, Math.round(snapshot.progress)).toString().padStart(2, "0")}%</b><small>LINE // 02</small>
@@ -430,7 +425,7 @@ export default function RacingGame() {
             <small>Rotate your forearm to steer. Limits are saved to your comfortable range.</small>
           </div>
         )}
-        {!running && !snapshot.finished && <button className="race-start" onClick={startRace}><Play size={21} fill="currentColor" /><span>{signalLost ? "SENSOR LOST" : snapshot.time === "00:00.000" ? "START RACE" : "RESUME"}</span><small>{signalLost ? "RECONNECT OR CHECK THE DEVICE, THEN RESUME" : sensorConnected ? "ROTATE YOUR FOREARM TO STEER" : "ARROW KEYS / A + D TO STEER"}</small></button>}
+        {!running && !snapshot.finished && <button className="race-start" onClick={startRace}><Play size={21} fill="currentColor" /><span>{signalLost ? "SENSOR LOST" : !sensorConnected ? "CONNECT SENSOR" : snapshot.time === "00:00.000" ? "START RACE" : "RESUME"}</span><small>{signalLost ? "RECONNECT OR CHECK THE DEVICE, THEN RESUME" : sensorConnected ? "ROTATE YOUR FOREARM TO STEER" : sensorStatus === "unsupported" ? "SENSOR NEEDS CHROME OR EDGE" : "CLICK TO CONNECT YOUR SENSOR"}</small></button>}
         {snapshot.finished && (
           <div className="finish-screen" role="dialog" aria-label="Race complete">
             <div className="finish-burst" aria-hidden="true">{Array.from({ length: 12 }, (_, index) => <i key={index} />)}</div>
@@ -446,7 +441,7 @@ export default function RacingGame() {
             {summary && next && (
               <div className="finish-rehab">
                 <div>
-                  {summary.source === "sensor" && <span>REACH <b>R {summary.peakRightDeg}° · L {summary.peakLeftDeg}°</b></span>}
+                  <span>REACH <b>R {summary.peakRightDeg}° · L {summary.peakLeftDeg}°</b></span>
                   <span>SWEEPS <b>{summary.sweeps}</b></span>
                   <span>COINS <b>{summary.coins}/{summary.coinsOffered}</b></span>
                   <span>SMOOTH <b>{summary.smoothness}</b></span>
@@ -465,7 +460,7 @@ export default function RacingGame() {
         )}
       </section>
 
-      <footer className="race-footer"><span><i className="key">A</i><i className="key">D</i> STEER</span><span><i className="key wide">SPACE</i> PAUSE</span><b className={sensorConnected ? "" : "idle"}><i /> {sensorConnected ? "SENSOR LIVE" : sensorStatus === "unsupported" ? "KEYBOARD ONLY (USE CHROME FOR SENSOR)" : "KEYBOARD MODE"}</b></footer>
+      <footer className="race-footer"><span>FOREARM ROTATION STEERS</span><span><i className="key wide">SPACE</i> PAUSE</span><b className={sensorConnected ? "" : "idle"}><i /> {sensorConnected ? "SENSOR LIVE" : sensorStatus === "unsupported" ? "USE CHROME OR EDGE" : "SENSOR NOT CONNECTED"}</b></footer>
     </main>
   );
 }
