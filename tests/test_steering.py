@@ -4,7 +4,7 @@ import unittest
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
-from main import PulseCircuit, SteeringSample
+from games.frontend.main import PulseCircuit, SteeringSample
 
 
 class FixedInput:
