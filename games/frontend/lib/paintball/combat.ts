@@ -88,7 +88,7 @@ export class Target {
   maxHp: number;
   group = new THREE.Group();
   body: THREE.Mesh;
-  glow: THREE.PointLight;
+  glow: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
   laser = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineBasicMaterial({ color: 0xff5ad5, transparent: true, opacity: 0 }));
   slot = SLOTS[0];
   hide = new THREE.Vector3();
@@ -126,7 +126,13 @@ export class Target {
     this.group.add(hit);
     this.spit.position.set(0, 1.45, 0.38);
     this.group.add(this.spit);
-    this.glow = new THREE.PointLight(0xff66d2, 0.2, 6);
+    // A real PointLight per hunter changed the scene's light count on every
+    // spawn/despawn, which forces three.js to recompile every lit material.
+    // A cheap emissive blob gives the same windup tell for no shader churn.
+    this.glow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.1, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff66d2, transparent: true, opacity: 0.12, depthWrite: false })
+    );
     this.glow.position.set(0, 1.4, 0.2);
     this.group.add(this.glow);
     this.group.position.copy(this.peek);

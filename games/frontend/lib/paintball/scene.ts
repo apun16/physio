@@ -23,7 +23,9 @@ export class PaintballScene {
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // 2x DPR on a retina panel meant ~5MP per frame with MSAA on top; 1.5 keeps
+    // the pixel-art look and cuts fill rate to roughly half.
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.setClearColor(0x7ec4e8, 1);
     this.renderer.shadowMap.enabled = true;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -96,10 +98,9 @@ export class PaintballScene {
     try {
       const district = await loadCityDistrict();
       this.scene.add(district.root);
+      // Raycasts run with recursive=true, so the root alone covers every mesh.
+      // Listing the children too made each shot walk the district twice.
       this.world.push(district.root);
-      district.root.traverse((child) => {
-        if (child instanceof THREE.Mesh) this.world.push(child);
-      });
       this.colliders = district.colliders;
       const box = new THREE.Box3().setFromObject(district.root);
       this.playMin.set(box.min.x, 0, box.min.z);

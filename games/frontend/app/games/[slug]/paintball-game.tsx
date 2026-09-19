@@ -95,7 +95,7 @@ export default function PaintballGameView() {
     <main className="paint-page" ref={shellRef}>
       <header className="paint-top">
         <Link href="/dashboard"><ArrowLeft size={16} /> QUEST HUB</Link>
-        <div><span>INKBURST</span><b>WORLD 04</b></div>
+        <div><span>INKBURST</span><b>WORLD 03</b></div>
         <div className="paint-top-actions">
           <button type="button" onClick={() => gameRef.current?.togglePause()}>PAUSE</button>
         </div>
@@ -120,10 +120,12 @@ export default function PaintballGameView() {
         <div className="paint-flash" style={{ opacity: hud.hitFlash * 0.65 }} />
         {hud.phase === "countdown" && <div className="paint-count">{Math.max(1, Math.ceil(hud.count))}</div>}
         {hud.phase === "pause" && (
-          <div className="paint-card">
+          <div className="paint-card paint-pause">
             <span>PAUSED</span>
             <h1>Street frozen</h1>
-            <button type="button" className="go" onClick={() => gameRef.current?.togglePause()}>RESUME</button>
+            <div className="paint-actions">
+              <button type="button" className="go" onClick={() => gameRef.current?.togglePause()}>RESUME</button>
+            </div>
           </div>
         )}
         {hud.phase === "over" && (
@@ -139,13 +141,18 @@ export default function PaintballGameView() {
         )}
         {screen === "start" && (
           <div className="paint-card paint-start">
-            <span>PULSEVERSE // WORLD 04</span>
+            <span>PULSEVERSE // WORLD 03</span>
             <h1>INKBURST</h1>
-            <p>First-person paintball through a city street. Move with the arrow keys. Look with the mouse. Click to fire. The cursor hides over the arena.</p>
+            <p>First-person paintball down a city street. Squeeze, aim, splat.</p>
+            <ul className="paint-keys">
+              <li><b>ARROWS</b><small>MOVE</small></li>
+              <li><b>MOUSE</b><small>AIM</small></li>
+              <li><b>CLICK</b><small>SHOOT</small></li>
+              <li><b>ESC</b><small>PAUSE</small></li>
+            </ul>
             <div className="paint-actions">
               <button type="button" className="go" onClick={begin}>START MATCH</button>
             </div>
-            <small>↑ run · ← left · → right · ↓ back · mouse aim · click shoot · Esc pause</small>
           </div>
         )}
       </section>

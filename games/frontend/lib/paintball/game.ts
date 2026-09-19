@@ -12,6 +12,15 @@ const PLAYER_COLOR = 0x3cf0ff;
 const ENEMY_COLOR = 0xff5ad5;
 const SPEED = 7.4;
 const RADIUS = 0.45;
+const HUNTER_RADIUS = 0.55;
+/** Half-angle of the wedge in front of the player that hunters are kept inside. */
+const VIEW_CONE = 0.7;
+/** How fast an off-screen hunter slides back into view, in radians per second. */
+const VIEW_SWING = 2.4;
+const HUNTER_MIN_DIST = 2.2;
+const HUNTER_SEPARATION = 1.6;
+const ARENA_PAD = 2.5;
+const UP = new THREE.Vector3(0, 1, 0);
 
 export class PaintballGame {
   phase: GamePhase = "boot";
@@ -51,6 +60,13 @@ export class PaintballGame {
     this.scene = new PaintballScene(canvas);
     this.paint = new PaintSurfaceManager(this.scene.scene);
     this.input.attach(root, canvas);
+    // The cursor is only captured during a live match, and losing it (Esc,
+    // alt-tab, clicking away) pauses instead of leaving the match running
+    // under a free cursor.
+    this.input.allowCapture = () => this.phase === "play" || this.phase === "countdown";
+    this.input.onLockLost = () => {
+      if (this.phase === "play") this.phase = "pause";
+    };
     this.movement.registerExternalDodgeInput((state) => this.hitbox.setPlayerMovementState(state));
     this.waves.reset();
     this.resize();
@@ -121,6 +137,8 @@ export class PaintballGame {
     target.notice = 0.2;
     target.speed = (spec?.speed ?? 3.4) + (this.huntersWanted - 1) * 0.22 + Math.min(1.8, this.scores.survival * 0.015);
     target.cooldown = 0.8 + Math.random() * 0.6;
+    const spot = this.spawnPointInView();
+    if (spot) target.group.position.copy(spot);
     this.scene.scene.add(target.group, target.laser);
     this.targets.push(target);
   }
@@ -255,7 +273,7 @@ export class PaintballGame {
     if (!this.onMap(this.player.x, this.player.z)) this.falling = true;
   }
 
-  private resolve(pos: THREE.Vector3) {
+  private resolve(pos: THREE.Vector3, radius = RADIUS) {
     for (const box of this.scene.colliders) {
       if (pos.y < box.min.y - 0.2 || pos.y > box.max.y + 0.2) continue;
       const closestX = THREE.MathUtils.clamp(pos.x, box.min.x, box.max.x);
@@ -263,12 +281,107 @@ export class PaintballGame {
       const dx = pos.x - closestX;
       const dz = pos.z - closestZ;
       const d2 = dx * dx + dz * dz;
-      if (d2 < RADIUS * RADIUS) {
+      if (d2 < radius * radius) {
         const d = Math.sqrt(Math.max(d2, 1e-6));
-        const push = (RADIUS - d) / d;
+        const push = (radius - d) / d;
         pos.x += dx * push;
         pos.z += dz * push;
       }
+    }
+  }
+
+  /** Flat unit vector for where the player is looking, on the xz plane. */
+  private flatLook() {
+    const dir = this.lookDir();
+    dir.y = 0;
+    return dir.lengthSq() > 1e-6 ? dir.normalize() : new THREE.Vector3(0, 0, -1);
+  }
+
+  private blocked(x: number, z: number) {
+    const probe = new THREE.Vector3(x, 0.9, z);
+    const before = probe.clone();
+    this.resolve(probe, HUNTER_RADIUS);
+    return !probe.equals(before);
+  }
+
+  /** A standing spot in front of the player, on the map and clear of buildings. */
+  private spawnPointInView() {
+    const forward = this.flatLook();
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const spread = (Math.random() - 0.5) * 2 * VIEW_CONE * 0.85;
+      const dist = 13 + Math.random() * 13;
+      const point = forward.clone().applyAxisAngle(UP, spread).multiplyScalar(dist).add(this.player);
+      point.y = 0;
+      if (!this.onMap(point.x, point.z)) continue;
+      if (this.blocked(point.x, point.z)) continue;
+      return point;
+    }
+    return null;
+  }
+
+  /**
+   * Hunters are kept on the map, out of the buildings, off each other and
+   * inside the player's view wedge, so they can never wander off, stack up or
+   * close in from somewhere off-screen.
+   */
+  private containTargets(dt: number) {
+    const forward = this.flatLook();
+
+    for (const target of this.targets) {
+      const pos = target.group.position;
+      const probe = new THREE.Vector3(
+        THREE.MathUtils.clamp(pos.x, this.scene.playMin.x + ARENA_PAD, this.scene.playMax.x - ARENA_PAD),
+        0.9,
+        THREE.MathUtils.clamp(pos.z, this.scene.playMin.z + ARENA_PAD, this.scene.playMax.z - ARENA_PAD)
+      );
+      this.resolve(probe, HUNTER_RADIUS);
+
+      const offset = new THREE.Vector3(probe.x - this.player.x, 0, probe.z - this.player.z);
+      const dist = offset.length();
+      if (dist > 1e-4) {
+        const heading = offset.clone().divideScalar(dist);
+        const angle = Math.acos(THREE.MathUtils.clamp(forward.dot(heading), -1, 1));
+        if (angle > VIEW_CONE) {
+          // Swing back toward the edge of the wedge at a capped rate, so turning
+          // around pulls hunters into view smoothly instead of snapping them.
+          const side = Math.sign(forward.z * heading.x - forward.x * heading.z) || 1;
+          const step = Math.min(angle - VIEW_CONE, VIEW_SWING * dt);
+          const swung = heading.clone().applyAxisAngle(UP, -side * step);
+          probe.x = this.player.x + swung.x * dist;
+          probe.z = this.player.z + swung.z * dist;
+        }
+        if (dist < HUNTER_MIN_DIST) {
+          probe.x = this.player.x + heading.x * HUNTER_MIN_DIST;
+          probe.z = this.player.z + heading.z * HUNTER_MIN_DIST;
+        }
+      }
+
+      pos.set(probe.x, 0, probe.z);
+    }
+
+    // Keep hunters from piling into the same spot.
+    for (let i = 0; i < this.targets.length; i += 1) {
+      for (let j = i + 1; j < this.targets.length; j += 1) {
+        const a = this.targets[i].group.position;
+        const b = this.targets[j].group.position;
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const d = Math.hypot(dx, dz);
+        if (d >= HUNTER_SEPARATION) continue;
+        const push = (HUNTER_SEPARATION - Math.max(d, 1e-4)) * 0.5;
+        const nx = d > 1e-4 ? dx / d : 1;
+        const nz = d > 1e-4 ? dz / d : 0;
+        a.x -= nx * push;
+        a.z -= nz * push;
+        b.x += nx * push;
+        b.z += nz * push;
+      }
+    }
+
+    const look = new THREE.Vector3();
+    for (const target of this.targets) {
+      look.set(this.player.x, 1.2, this.player.z);
+      target.group.lookAt(look);
     }
   }
 
@@ -336,7 +449,8 @@ export class PaintballGame {
       if (target.windup > 0) {
         target.windup -= dt;
         const p = 1 - target.windup / settings.warning;
-        target.glow.intensity = 0.4 + p * 1.6;
+        target.glow.material.opacity = 0.25 + p * 0.7;
+        target.glow.scale.setScalar(1 + p * 0.8);
         (target.laser.material as THREE.LineBasicMaterial).opacity = 0.15 + p * 0.7;
         const origin = target.group.position.clone().add(new THREE.Vector3(0, 1.35, 0.15));
         target.laser.geometry.setFromPoints([origin, target.lockedAim ?? this.player.clone()]);
@@ -344,7 +458,8 @@ export class PaintballGame {
           this.enemyFire(target, settings.projectileSpeed + 5 + this.huntersWanted);
           target.cooldown = Math.max(0.55, 1.35 - this.huntersWanted * 0.22 + Math.random() * 0.4);
           (target.laser.material as THREE.LineBasicMaterial).opacity = 0;
-          target.glow.intensity = 0.12;
+          target.glow.material.opacity = 0.12;
+          target.glow.scale.setScalar(1);
         }
       } else if (target.age > target.notice && target.cooldown <= 0) {
         target.windup = Math.max(0.55, settings.warning);
@@ -354,6 +469,8 @@ export class PaintballGame {
         if (child.name.startsWith("armour-")) child.visible = Number(child.name.slice(7)) < target.hp;
       });
     }
+
+    this.containTargets(dt);
 
     for (const shot of [...this.shots]) {
       if (shot.spent) continue;

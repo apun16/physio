@@ -11,7 +11,6 @@ import {
   Settings,
   Sparkles,
   Trophy,
-  Zap,
   Crosshair
 } from "lucide-react";
 import Link from "next/link";
@@ -34,14 +33,6 @@ const worlds = [
     progress: "84%"
   },
   {
-    slug: "control",
-    title: "Control",
-    subtitle: "Squeeze + Steer",
-    icon: Zap,
-    status: "AVAILABLE",
-    progress: "0%"
-  },
-  {
     slug: "paintball",
     title: "Inkburst",
     subtitle: "Squeeze, aim, splat",
@@ -57,7 +48,7 @@ export default function DashboardPage() {
       <div className="crt-layer" />
       <aside className="portal-side">
         <Link className="portal-side-logo" href="/" aria-label="Pulse Verse home">
-          <span className="pixel-mark" aria-hidden="true"><i /><i /><i /><i /><i /><i /></span>
+          <span className="pixel-mark" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /></span>
         </Link>
         <nav aria-label="Dashboard navigation">
           <Link href="/" aria-label="Home"><Home size={18} /></Link>

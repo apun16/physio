@@ -3,7 +3,7 @@ import Link from "next/link";
 import BootIntro from "./boot-intro";
 
 function PixelMark() {
-  return <span className="pixel-mark" aria-hidden="true"><i /><i /><i /><i /><i /><i /></span>;
+  return <span className="pixel-mark" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /></span>;
 }
 
 export default function HomePage() {
@@ -29,8 +29,7 @@ export default function HomePage() {
         <nav className="world-links" aria-label="Game worlds">
           <Link href="/games/move"><span>01</span><div><b>SKYWARD</b><small>MOVE THROUGH TARGETS</small></div></Link>
           <Link href="/games/steer"><span>02</span><div><b>PULSE CIRCUIT</b><small>MASTER THE ROAD</small></div></Link>
-          <Link href="/games/control"><span>03</span><div><b>GRIP TEMPLE</b><small>CONTROL THE ENERGY</small></div></Link>
-          <Link href="/games/paintball"><span>04</span><div><b>INKBURST</b><small>SQUEEZE, AIM, SPLAT</small></div></Link>
+          <Link href="/games/paintball"><span>03</span><div><b>INKBURST</b><small>SQUEEZE, AIM, SPLAT</small></div></Link>
         </nav>
         <div className="world-status">
           <b>PLAYER 01 // READY</b>

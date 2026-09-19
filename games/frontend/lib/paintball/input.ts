@@ -90,10 +90,17 @@ export class InputManager {
   pitch = 0;
   locked = false;
   looking = false;
+  /** Set by the game: only capture the cursor while a match is actually running. */
+  allowCapture: () => boolean = () => true;
+  /** Set by the game: fired when the cursor is released (Esc, alt-tab, focus loss). */
+  onLockLost: (() => void) | null = null;
   private element: HTMLElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private clicked = false;
   private lookSense = 0.0022;
+  /** Set when the browser refuses pointer lock; mouse look falls back to drag. */
+  private dragLook = false;
+  private lockWait = 0;
 
   attach(element: HTMLElement, canvas?: HTMLCanvasElement) {
     this.element = element;
@@ -124,22 +131,43 @@ export class InputManager {
   }
 
   capturePointer() {
+    if (!this.allowCapture()) return;
     this.looking = true;
+    this.dragLook = false;
     try {
       const result = this.canvas?.requestPointerLock();
-      if (result && typeof (result as Promise<void>).then === "function") void result.catch(() => undefined);
+      if (result && typeof (result as Promise<void>).then === "function") {
+        void result.catch(() => {
+          this.dragLook = true;
+        });
+      }
     } catch {
-      /* pointer lock is optional; mouse look still works while hovering */
+      this.dragLook = true;
     }
+    // Some browsers reject the request silently, so confirm it actually took.
+    window.clearTimeout(this.lockWait);
+    this.lockWait = window.setTimeout(() => {
+      if (this.looking && !this.locked) this.dragLook = true;
+    }, 300);
   }
 
   releasePointer() {
     this.looking = false;
+    this.dragLook = false;
+    window.clearTimeout(this.lockWait);
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
   private onLock = () => {
+    const wasLocked = this.locked;
     this.locked = document.pointerLockElement === this.canvas;
+    if (this.locked) this.dragLook = false;
+    if (wasLocked && !this.locked) {
+      // The cursor is free again, so stop steering with it and let the game react.
+      this.looking = false;
+      this.dragLook = false;
+      this.onLockLost?.();
+    }
   };
 
   private onPointerDown = (event: PointerEvent) => {
@@ -147,8 +175,9 @@ export class InputManager {
     const target = event.target as HTMLElement | null;
     if (target?.closest("button, a, input, .paint-card, .paint-debug, .paint-top, .paint-foot")) return;
     this.mouse.down = true;
-    this.clicked = true;
     this.element?.focus();
+    if (!this.allowCapture()) return;
+    this.clicked = true;
     this.capturePointer();
   };
 
@@ -157,7 +186,12 @@ export class InputManager {
   };
 
   private onMouseMove = (event: MouseEvent) => {
-    if (!this.looking && !this.locked && !this.mouse.down) return;
+    // Only steer while the cursor is genuinely captured. Steering on hover or
+    // on a held button meant the view kept spinning after the player pressed
+    // Esc and moved the free cursor toward the HUD.
+    // Drag-to-look is the fallback when the browser refused to lock the cursor;
+    // it still never steers on a plain hover.
+    if (!this.locked && !(this.dragLook && this.mouse.down && this.allowCapture())) return;
     this.yaw -= event.movementX * this.lookSense;
     this.pitch -= event.movementY * this.lookSense;
     this.pitch = clamp(this.pitch, -1.45, 1.45);

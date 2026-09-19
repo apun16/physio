@@ -34,9 +34,12 @@ function stripHelpers(model: THREE.Object3D) {
 function paintMesh(root: THREE.Object3D) {
   root.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return;
-    child.castShadow = true;
+    // The district is three full FBX blocks (~2.4k meshes). Casting shadows from
+    // all of them doubled every frame into a second pass, and disabling culling
+    // meant the whole district drew even when it was behind the camera.
+    child.castShadow = false;
     child.receiveShadow = true;
-    child.frustumCulled = false;
+    child.frustumCulled = true;
     child.userData.paintable = true;
     const materials = Array.isArray(child.material) ? child.material : [child.material];
     for (const material of materials) {
