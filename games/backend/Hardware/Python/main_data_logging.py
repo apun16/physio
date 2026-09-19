@@ -1,7 +1,7 @@
 import serial
 import msvcrt   # Windows keyboard input
 
-ser = serial.Serial('COM7', 115200, timeout=1)
+ser = serial.Serial('COM8', 115200, timeout=1)
 ser.reset_input_buffer()
 
 print("Keys: c=center  l/r=roll limits  a/d=left/right limits  b=gyro recalibrate  q=quit")
