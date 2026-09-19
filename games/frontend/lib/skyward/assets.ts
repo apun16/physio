@@ -212,6 +212,114 @@ function sliceActors(source: HTMLCanvasElement, count: number, minArea = 800) {
   return blobs.map((blob) => cropAlpha(blob.sprite, 1));
 }
 
+function extractOwnedBlobs(source: HTMLCanvasElement, minArea = 700) {
+  const context = source.getContext("2d");
+  if (!context) return [];
+  const { width, height } = source;
+  const image = context.getImageData(0, 0, width, height);
+  const pixels = image.data;
+  const owner = new Int32Array(width * height);
+  owner.fill(-1);
+  const blobs: { sprite: HTMLCanvasElement; x: number; y: number; w: number; h: number; area: number; id: number }[] = [];
+  const opaque = (index: number) => pixels[index * 4 + 3] > 28;
+  let nextId = 0;
+
+  for (let start = 0; start < width * height; start += 1) {
+    if (owner[start] !== -1 || !opaque(start)) continue;
+    const id = nextId;
+    const stack = [start];
+    owner[start] = id;
+    let minX = width;
+    let minY = height;
+    let maxX = 0;
+    let maxY = 0;
+    let area = 0;
+    while (stack.length) {
+      const index = stack.pop() as number;
+      const x = index % width;
+      const y = (index / width) | 0;
+      area += 1;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      const neighbors = [index + 1, index - 1, index + width, index - width];
+      for (const next of neighbors) {
+        if (next < 0 || next >= width * height || owner[next] !== -1 || !opaque(next)) continue;
+        const nx = next % width;
+        if (Math.abs(nx - x) > 1) continue;
+        owner[next] = id;
+        stack.push(next);
+      }
+    }
+    nextId += 1;
+    if (area < minArea) continue;
+    const w = maxX - minX + 1;
+    const h = maxY - minY + 1;
+    const cropped = canvasFrom(w, h);
+    const dest = cropped.context.createImageData(w, h);
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const src = y * width + x;
+        if (owner[src] !== id) continue;
+        const di = ((y - minY) * w + (x - minX)) * 4;
+        const si = src * 4;
+        dest.data[di] = pixels[si];
+        dest.data[di + 1] = pixels[si + 1];
+        dest.data[di + 2] = pixels[si + 2];
+        dest.data[di + 3] = pixels[si + 3];
+      }
+    }
+    cropped.context.putImageData(dest, 0, 0);
+    blobs.push({ sprite: cropped.canvas, x: minX, y: minY, w, h, area, id });
+  }
+  return blobs;
+}
+
+function isGoblinGreen(r: number, g: number, b: number, a: number) {
+  if (a < 20) return false;
+  return g > r + 18 && g > b + 10 && g > 70 && r < 160 && b < 140;
+}
+
+function punchBruteLeak(canvas: HTMLCanvasElement) {
+  const context = canvas.getContext("2d");
+  if (!context) return canvas;
+  const { width, height } = canvas;
+  const data = context.getImageData(0, 0, width, height);
+  const pixels = data.data;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const edge = x < width * 0.24 || (y > height * 0.62 && x < width * 0.38) || y > height - 10;
+      if (!edge) continue;
+      const i = (y * width + x) * 4;
+      if (isGoblinGreen(pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3])) pixels[i + 3] = 0;
+    }
+  }
+  context.putImageData(data, 0, 0);
+  return cropAlpha(canvas, 1);
+}
+
+function isCheckerPaint(r: number, g: number, b: number, a: number) {
+  if (a < 10) return false;
+  const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+  const bright = (r + g + b) / 3;
+  return chroma <= 24 && bright >= 205;
+}
+
+function keyArcherChecker(canvas: HTMLCanvasElement) {
+  return cropAlpha(keyBy(canvas, isCheckerPaint), 1);
+}
+
+function sliceEnemyActors(source: HTMLCanvasElement, count: number, minArea = 900) {
+  const cleaned = floodKey(source, isPaper);
+  return extractOwnedBlobs(cleaned, minArea)
+    .filter((blob) => blob.h > 48 && blob.w > 24)
+    .sort((a, b) => b.area - a.area)
+    .slice(0, count)
+    .sort((a, b) => a.x - b.x)
+    .map((blob) => cropAlpha(blob.sprite, 1));
+}
+
 /** Slice a sheet into equal cells, then crop transparent padding inside each cell. */
 function sliceGrid(source: HTMLCanvasElement, cols: number, rows: number, trimBottom = 0) {
   const usableH = Math.max(1, Math.floor(source.height * (1 - trimBottom)));
@@ -376,11 +484,15 @@ export async function loadSkywardAssets(): Promise<SkywardAssets> {
   hero.bow_hold = hero.bow ?? idle;
   hero.bow_release = hero.bow ?? idle;
 
-  const enemyCanvases = sliceActors(drawImage(enemyImg).canvas, 6, 900);
+  const enemyCanvases = sliceEnemyActors(drawImage(enemyImg).canvas, 6, 900);
   const kinds = ["goblin", "shield_beast", "archer", "armored", "elite", "boss"];
   const enemies: Record<string, Sprite> = {};
   kinds.forEach((kind, index) => {
-    if (enemyCanvases[index]) enemies[kind] = asSprite(enemyCanvases[index], actorScale);
+    let canvas = enemyCanvases[index];
+    if (!canvas) return;
+    if (kind === "shield_beast") canvas = punchBruteLeak(canvas);
+    if (kind === "archer") canvas = keyArcherChecker(canvas);
+    enemies[kind] = asSprite(canvas, actorScale);
   });
 
   const gearSheet = floodKey(drawImage(gearImg).canvas, isPaper);
