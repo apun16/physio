@@ -1,8 +1,12 @@
 "use client";
 
-import { ArrowLeft, Gauge, Pause, Play, RotateCcw, Volume2 } from "lucide-react";
+import { ArrowLeft, Bluetooth, Gauge, Pause, Play, RotateCcw, Volume2 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { LEVELS, RehabRecorder, ROAD_HALF_WIDTH, loadProfile, recommend, saveLevel, saveSession, type RehabProfile, type SessionSummary } from "../../../lib/racing/rehab";
+import { SerialSensor } from "../../../lib/racing/sensor";
+
+const COIN_SPACING = 520;
 
 type RaceSnapshot = {
   speed: number;
@@ -24,12 +28,29 @@ export default function RacingGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const runningRef = useRef(false);
   const resetRef = useRef(0);
+  const [sensor] = useState(() => new SerialSensor());
+  const sensorStatus = useSyncExternalStore(
+    (notify) => sensor.subscribe(notify),
+    () => sensor.status,
+    () => "disconnected" as const
+  );
+  const profileRef = useRef<RehabProfile>(LEVELS[0]);
+  const [profile, setProfile] = useState<RehabProfile>(LEVELS[0]);
+  const [summary, setSummary] = useState<SessionSummary | null>(null);
+  const [signalLost, setSignalLost] = useState(false);
   const [running, setRunning] = useState(false);
   const [snapshot, setSnapshot] = useState<RaceSnapshot>({ speed: 0, coins: 0, lap: 1, progress: 0, time: "00:00.000", finished: false });
 
   useEffect(() => {
     runningRef.current = running;
   }, [running]);
+
+  useEffect(() => {
+    const saved = loadProfile();
+    profileRef.current = saved;
+    setProfile(saved);
+    return () => { void sensor.disconnect(); };
+  }, [sensor]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -48,6 +69,8 @@ export default function RacingGame() {
     let lap = 1;
     let pickupFlash = 0;
     let finished = false;
+    let recorder: RehabRecorder | null = null;
+    let wasLive = false;
     let previousReset = resetRef.current;
     const collectedCoins = new Set<number>();
 
@@ -109,18 +132,40 @@ export default function RacingGame() {
         coins = 0;
         lap = 1;
         finished = false;
+        recorder = null;
         collectedCoins.clear();
         previousReset = resetRef.current;
       }
 
+      const rehab = profileRef.current;
+      const usingSensor = sensor.status === "connected";
+      const sensorLive = sensor.isLive(now);
+      if (usingSensor && !sensorLive && wasLive && runningRef.current) {
+        // Safe loss-of-signal: stop the car rather than let it drift with a stale reading.
+        recorder?.signalDropped();
+        runningRef.current = false;
+        setRunning(false);
+        setSignalLost(true);
+      }
+      wasLive = sensorLive;
+
       if (runningRef.current) {
-        const steering = Number(keys.has("arrowright") || keys.has("d")) - Number(keys.has("arrowleft") || keys.has("a"));
-        const offRoad = Math.abs(x) > .92;
+        const offRoad = Math.abs(x) > ROAD_HALF_WIDTH;
         const targetSpeed = offRoad ? 118 : 245;
         speed += (targetSpeed - speed) * Math.min(1, dt * (offRoad ? 4.5 : 2.2));
-        x += steering * dt * (1.15 + speed / 360);
-        x *= 1 - dt * .15;
+        recorder ??= new RehabRecorder(rehab, usingSensor ? "sensor" : "keyboard");
+        const frame = sensor.latest;
+        if (usingSensor) {
+          // Wrist angle maps straight to lateral position: reaching a lane needs that share of the calibrated range.
+          // Without a fresh reading the car holds its line instead of following stale data.
+          if (frame && sensorLive) x += (frame.steer - x) * Math.min(1, dt * 8);
+        } else {
+          const steering = Number(keys.has("arrowright") || keys.has("d")) - Number(keys.has("arrowleft") || keys.has("a"));
+          x += steering * dt * (1.15 + speed / 360);
+          x *= 1 - dt * .15;
+        }
         x = Math.max(-1.35, Math.min(1.35, x));
+        recorder.update(dt, x, frame && usingSensor ? frame.steer : x, frame && usingSensor ? frame.roll : null);
         distance += speed * dt;
         elapsed += dt;
         pickupFlash = Math.max(0, pickupFlash - dt);
@@ -131,6 +176,9 @@ export default function RacingGame() {
           finished = true;
           runningRef.current = false;
           setRunning(false);
+          const result = (recorder ?? new RehabRecorder(rehab, "keyboard")).summarize(coins, distance, COIN_SPACING);
+          saveSession(result);
+          setSummary(result);
         }
       }
 
@@ -215,18 +263,18 @@ export default function RacingGame() {
         pixelRect(center + spread + size * .25, blockY, size * 1.45, size, blockColors[(index + 2) % blockColors.length]);
       }
 
-      const firstCoin = Math.floor(distance / 520);
+      const firstCoin = Math.floor(distance / COIN_SPACING);
       for (let index = 1; index <= 7; index += 1) {
         const coinId = firstCoin + index;
-        const coinDistance = coinId * 520 - distance;
+        const coinDistance = coinId * COIN_SPACING - distance;
         if (coinDistance <= 0 || coinDistance > 2600 || collectedCoins.has(coinId)) continue;
         const phase = 1 - coinDistance / 2600;
         const depth = phase * phase;
-        const lane = Math.sin(coinId * 2.2) * .58;
+        const lane = Math.sin(coinId * 2.2) * rehab.laneSpread;
         const center = width / 2 + curve * (1 - phase);
         const spread = roadTop / 2 + (roadBottom / 2 - roadTop / 2) * depth;
         drawCoin(center + lane * spread, horizon + depth * (height - horizon) - 25, .45 + depth * 1.2);
-        if (runningRef.current && coinDistance < 175 && Math.abs(x - lane) < .34) {
+        if (runningRef.current && coinDistance < 175 && Math.abs(x - lane) < rehab.pickupWindow) {
           collectedCoins.add(coinId);
           coins += 1;
           pickupFlash = .45;
@@ -323,13 +371,30 @@ export default function RacingGame() {
       window.removeEventListener("keydown", press);
       window.removeEventListener("keyup", release);
     };
-  }, []);
+  }, [sensor]);
 
   const reset = () => {
     resetRef.current += 1;
+    setSummary(null);
+    setSignalLost(false);
     setSnapshot({ speed: 0, coins: 0, lap: 1, progress: 0, time: "00:00.000", finished: false });
     setRunning(false);
   };
+
+  const startRace = () => {
+    setSignalLost(false);
+    setRunning(true);
+  };
+
+  const changeLevel = (level: number) => {
+    saveLevel(level);
+    profileRef.current = LEVELS[level - 1];
+    setProfile(LEVELS[level - 1]);
+    reset();
+  };
+
+  const next = summary ? recommend(summary, profile) : null;
+  const sensorConnected = sensorStatus === "connected";
 
   return (
     <main className="race-page">
@@ -337,7 +402,7 @@ export default function RacingGame() {
       <header className="race-header">
         <Link href="/dashboard"><ArrowLeft size={16} /> QUEST HUB</Link>
         <div><span>PULSE CIRCUIT</span><b>WORLD 02</b></div>
-        <div className="race-header-actions"><button onClick={snapshot.finished ? reset : () => setRunning((value) => !value)}>{snapshot.finished ? <RotateCcw size={15} /> : running ? <Pause size={15} /> : <Play size={15} />}<span>{snapshot.finished ? "REPLAY" : running ? "PAUSE" : "START"}</span></button><button onClick={reset} aria-label="Reset race"><RotateCcw size={15} /></button><button aria-label="Sound"><Volume2 size={15} /></button></div>
+        <div className="race-header-actions">{sensorStatus !== "unsupported" && <button onClick={() => (sensorConnected ? sensor.disconnect() : sensor.connect())} aria-label={sensorConnected ? "Disconnect sensor" : "Connect sensor"}><Bluetooth size={15} /><span>{sensorConnected ? "SENSOR ON" : sensorStatus === "connecting" ? "CONNECTING" : "CONNECT"}</span></button>}<button onClick={snapshot.finished ? reset : () => (running ? setRunning(false) : startRace())}>{snapshot.finished ? <RotateCcw size={15} /> : running ? <Pause size={15} /> : <Play size={15} />}<span>{snapshot.finished ? "REPLAY" : running ? "PAUSE" : "START"}</span></button><button onClick={reset} aria-label="Reset race"><RotateCcw size={15} /></button><button aria-label="Sound"><Volume2 size={15} /></button></div>
       </header>
 
       <section className="race-shell">
@@ -347,7 +412,18 @@ export default function RacingGame() {
         <canvas ref={canvasRef} width={1280} height={720} aria-label="Playable Pulse Circuit kart racing game" />
         <div className="speed-hud"><Gauge size={18} /><strong>{snapshot.speed}</strong><span>KM/H</span></div>
         <div className="race-progress"><span style={{ width: `${snapshot.progress}%` }} /></div>
-        {!running && !snapshot.finished && <button className="race-start" onClick={() => setRunning(true)}><Play size={21} fill="currentColor" /><span>{snapshot.time === "00:00.000" ? "START RACE" : "RESUME"}</span><small>ARROW KEYS / A + D TO STEER</small></button>}
+        {sensorConnected && !snapshot.finished && (
+          <div className="sensor-panel">
+            <span>LEVEL {profile.level} · {profile.label.toUpperCase()}</span>
+            <div className="sensor-steps">
+              <button onClick={() => sensor.send("center")}>1 · HOLD NEUTRAL, SET CENTER</button>
+              <button onClick={() => sensor.send("rollRight")}>2 · TURN RIGHT, SAVE LIMIT</button>
+              <button onClick={() => sensor.send("rollLeft")}>3 · TURN LEFT, SAVE LIMIT</button>
+            </div>
+            <small>Rotate your forearm to steer. Limits are saved to your comfortable range.</small>
+          </div>
+        )}
+        {!running && !snapshot.finished && <button className="race-start" onClick={startRace}><Play size={21} fill="currentColor" /><span>{signalLost ? "SENSOR LOST" : snapshot.time === "00:00.000" ? "START RACE" : "RESUME"}</span><small>{signalLost ? "RECONNECT OR CHECK THE DEVICE, THEN RESUME" : sensorConnected ? "ROTATE YOUR FOREARM TO STEER" : "ARROW KEYS / A + D TO STEER"}</small></button>}
         {snapshot.finished && (
           <div className="finish-screen" role="dialog" aria-label="Race complete">
             <div className="finish-burst" aria-hidden="true">{Array.from({ length: 12 }, (_, index) => <i key={index} />)}</div>
@@ -360,6 +436,19 @@ export default function RacingGame() {
               <div><span>COINS</span><strong>◉ {snapshot.coins}</strong></div>
               <div><span>QUEST XP</span><strong>+{750 + snapshot.coins * 25}</strong></div>
             </div>
+            {summary && next && (
+              <div className="finish-rehab">
+                <div>
+                  {summary.source === "sensor" && <span>REACH <b>R {summary.peakRightDeg}° · L {summary.peakLeftDeg}°</b></span>}
+                  <span>SWEEPS <b>{summary.sweeps}</b></span>
+                  <span>COINS <b>{summary.coins}/{summary.coinsOffered}</b></span>
+                  <span>SMOOTH <b>{summary.smoothness}</b></span>
+                  <span>ON ROAD <b>{Math.round(summary.onRoad * 100)}%</b></span>
+                </div>
+                <p>NEXT STEP: {next.reason}</p>
+                {next.action !== "repeat" && <button onClick={() => changeLevel(profile.level + (next.action === "advance" ? 1 : -1))}>{next.action === "advance" ? `TRY LEVEL ${profile.level + 1}` : `DROP TO LEVEL ${profile.level - 1}`}</button>}
+              </div>
+            )}
             <div className="finish-actions">
               <button onClick={reset}><RotateCcw size={15} /> RACE AGAIN</button>
               <Link href="/dashboard">QUEST HUB <ArrowLeft size={15} /></Link>
@@ -369,7 +458,7 @@ export default function RacingGame() {
         )}
       </section>
 
-      <footer className="race-footer"><span><i className="key">A</i><i className="key">D</i> STEER</span><span><i className="key wide">SPACE</i> PAUSE</span><b><i /> SENSOR INPUT READY</b></footer>
+      <footer className="race-footer"><span><i className="key">A</i><i className="key">D</i> STEER</span><span><i className="key wide">SPACE</i> PAUSE</span><b className={sensorConnected ? "" : "idle"}><i /> {sensorConnected ? "SENSOR LIVE" : sensorStatus === "unsupported" ? "KEYBOARD ONLY (USE CHROME FOR SENSOR)" : "KEYBOARD MODE"}</b></footer>
     </main>
   );
 }
