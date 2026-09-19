@@ -54,6 +54,13 @@ function isPaper(r: number, g: number, b: number, a: number) {
   return (r >= 220 && g >= 220 && b >= 220) || (chroma <= 36 && bright >= 178);
 }
 
+function isCheckerboard(r: number, g: number, b: number, a: number) {
+  if (a < 8) return false;
+  const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+  if (chroma > 14) return false;
+  return (r + g + b) / 3 >= 216;
+}
+
 function isInk(r: number, g: number, b: number, a: number) {
   return a < 8 || (r < 14 && g < 14 && b < 14);
 }
@@ -92,6 +99,47 @@ function floodKey(canvas: HTMLCanvasElement, test: (r: number, g: number, b: num
     enqueue(x - 1, y);
     enqueue(x, y + 1);
     enqueue(x, y - 1);
+  }
+  context.putImageData(data, 0, 0);
+  return canvas;
+}
+
+function keySmallIslands(
+  canvas: HTMLCanvasElement,
+  test: (r: number, g: number, b: number, a: number) => boolean,
+  maxArea = 3500
+) {
+  const context = canvas.getContext("2d");
+  if (!context) return canvas;
+  const { width, height } = canvas;
+  const data = context.getImageData(0, 0, width, height);
+  const pixels = data.data;
+  const seen = new Uint8Array(width * height);
+  const match = (index: number) => {
+    const o = index * 4;
+    return test(pixels[o], pixels[o + 1], pixels[o + 2], pixels[o + 3]);
+  };
+  for (let start = 0; start < width * height; start += 1) {
+    if (seen[start] || !match(start)) continue;
+    const stack = [start];
+    const members = [start];
+    seen[start] = 1;
+    while (stack.length) {
+      const index = stack.pop() as number;
+      const x = index % width;
+      const y = (index / width) | 0;
+      const neighbors = [index + 1, index - 1, index + width, index - width];
+      for (const next of neighbors) {
+        if (next < 0 || next >= width * height || seen[next] || !match(next)) continue;
+        const nx = next % width;
+        if (Math.abs(nx - x) > 1) continue;
+        seen[next] = 1;
+        stack.push(next);
+        members.push(next);
+      }
+    }
+    if (members.length > maxArea) continue;
+    for (const index of members) pixels[index * 4 + 3] = 0;
   }
   context.putImageData(data, 0, 0);
   return canvas;
@@ -164,23 +212,22 @@ function extractBlobs(source: HTMLCanvasElement, minArea = 700) {
   const { width, height } = source;
   const pixels = context.getImageData(0, 0, width, height).data;
   const seen = new Uint8Array(width * height);
-  const blobs: { sprite: HTMLCanvasElement; x: number; y: number; w: number; h: number; area: number }[] = [];
   const opaque = (index: number) => pixels[index * 4 + 3] > 28;
+  const components: { members: number[]; minX: number; minY: number; maxX: number; maxY: number; area: number }[] = [];
 
   for (let start = 0; start < width * height; start += 1) {
     if (seen[start] || !opaque(start)) continue;
     const stack = [start];
+    const members = [start];
     seen[start] = 1;
     let minX = width;
     let minY = height;
     let maxX = 0;
     let maxY = 0;
-    let area = 0;
     while (stack.length) {
       const index = stack.pop() as number;
       const x = index % width;
       const y = (index / width) | 0;
-      area += 1;
       if (x < minX) minX = x;
       if (y < minY) minY = y;
       if (x > maxX) maxX = x;
@@ -192,14 +239,37 @@ function extractBlobs(source: HTMLCanvasElement, minArea = 700) {
         if (Math.abs(nx - x) > 1) continue;
         seen[next] = 1;
         stack.push(next);
+        members.push(next);
       }
     }
-    if (area < minArea) continue;
-    const cropped = canvasFrom(maxX - minX + 1, maxY - minY + 1);
-    cropped.context.drawImage(source, minX, minY, cropped.canvas.width, cropped.canvas.height, 0, 0, cropped.canvas.width, cropped.canvas.height);
-    blobs.push({ sprite: cropped.canvas, x: minX, y: minY, w: cropped.canvas.width, h: cropped.canvas.height, area });
+    components.push({ members, minX, minY, maxX, maxY, area: members.length });
   }
-  return blobs;
+
+  const large = components.filter((component) => component.area >= minArea);
+  const owner = new Int32Array(width * height);
+  large.forEach((component, index) => {
+    const id = index + 1;
+    for (const pixel of component.members) owner[pixel] = id;
+  });
+
+  return large.map((component, index) => {
+    const id = index + 1;
+    const cw = component.maxX - component.minX + 1;
+    const ch = component.maxY - component.minY + 1;
+    const cropped = canvasFrom(cw, ch);
+    cropped.context.drawImage(source, component.minX, component.minY, cw, ch, 0, 0, cw, ch);
+    const data = cropped.context.getImageData(0, 0, cw, ch);
+    const dest = data.data;
+    for (let y = 0; y < ch; y += 1) {
+      for (let x = 0; x < cw; x += 1) {
+        const sourceIndex = (y + component.minY) * width + (x + component.minX);
+        const other = owner[sourceIndex];
+        if (other !== 0 && other !== id) dest[(y * cw + x) * 4 + 3] = 0;
+      }
+    }
+    cropped.context.putImageData(data, 0, 0);
+    return { sprite: cropped.canvas, x: component.minX, y: component.minY, w: cw, h: ch, area: component.area };
+  });
 }
 
 function sliceActors(source: HTMLCanvasElement, count: number, minArea = 800) {
@@ -260,13 +330,6 @@ function hasFlame(source: HTMLCanvasElement) {
   return false;
 }
 
-function cropTalkPortrait(actions: HTMLCanvasElement) {
-  const cleaned = floodKey(actions, isPaper);
-  const cell = canvasFrom(140, 120);
-  cell.context.drawImage(cleaned, 1096, 244, 140, 120, 0, 0, 140, 120);
-  return cropAlpha(cell.canvas, 1);
-}
-
 export type SkywardAssets = {
   idle: Sprite;
   walk: Sprite[];
@@ -287,6 +350,7 @@ export type SkywardAssets = {
 
 export async function loadSkywardAssets(): Promise<SkywardAssets> {
   const layerFiles = (set: string) => [1, 2, 3, 4, 5].map((index) => loadImage(`/skyward/pack/bg/${set}/layer${index}.png`));
+  const portraitLoad = loadImage("/skyward/generated/hero_portrait.png");
   const [
     walkImg,
     actionsImg,
@@ -346,6 +410,7 @@ export async function loadSkywardAssets(): Promise<SkywardAssets> {
     ...[1, 2, 3, 4, 5, 6].map((index) => loadImage(`/skyward/pack/cloud${index}.png`)),
     ...[1, 2, 3, 4].map((index) => loadImage(`/skyward/pack/birds${index}.png`))
   ]);
+  const portraitImg = await portraitLoad;
 
   const nLayers = rest.slice(0, 5) as HTMLImageElement[];
   const aLayers = rest.slice(5, 10) as HTMLImageElement[];
@@ -380,7 +445,9 @@ export async function loadSkywardAssets(): Promise<SkywardAssets> {
   const kinds = ["goblin", "shield_beast", "archer", "armored", "elite", "boss"];
   const enemies: Record<string, Sprite> = {};
   kinds.forEach((kind, index) => {
-    if (enemyCanvases[index]) enemies[kind] = asSprite(enemyCanvases[index], actorScale);
+    if (!enemyCanvases[index]) return;
+    const canvas = kind === "archer" ? keySmallIslands(enemyCanvases[index], isCheckerboard) : enemyCanvases[index];
+    enemies[kind] = asSprite(canvas, actorScale);
   });
 
   const gearSheet = floodKey(drawImage(gearImg).canvas, isPaper);
@@ -449,7 +516,7 @@ export async function loadSkywardAssets(): Promise<SkywardAssets> {
     hero,
     enemies,
     gear,
-    portrait: asSprite(cropTalkPortrait(drawImage(actionsImg).canvas), 1),
+    portrait: asSprite(cropAlpha(floodKey(drawImage(portraitImg).canvas, isPaper), 1), 1),
     trees,
     grassEdge,
     layers,
