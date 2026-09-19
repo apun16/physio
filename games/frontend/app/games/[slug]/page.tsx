@@ -1,6 +1,7 @@
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import RacingGame from "./racing-game";
+import SkywardGame from "./skyward-game";
 
 const titles: Record<string, string> = {
   move: "Move",
@@ -13,6 +14,7 @@ export default async function GamePage({ params }: { params: Promise<{ slug: str
   const title = titles[slug] ?? slug;
 
   if (slug === "steer") return <RacingGame />;
+  if (slug === "move") return <SkywardGame />;
 
   return (
     <main className="game-stage">

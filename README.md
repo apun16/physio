@@ -91,3 +91,15 @@ The game consumes normalized steering through the `SteeringSource` protocol in
 python -m py_compile main.py
 SDL_VIDEODRIVER=dummy python main.py --smoke-test
 ```
+
+## Skyward Journey (Level 1)
+
+Side-view Move session in the Next.js app. Link walks automatically; combat uses an input provider so IMU hardware can replace the laptop tester later. No Python process is required.
+
+```bash
+cd games/frontend
+npm install
+npm run dev
+```
+
+Open `/games/move`. Combat tester (not walking): `J/K/L` slash, `F` shield, `E` bow.
