@@ -14,7 +14,7 @@ export default async function GamePage({ params }: { params: Promise<{ slug: str
   const title = titles[slug] ?? slug;
 
   if (slug === "steer") return <RacingGame />;
-  if (slug === "move") return <SkywardGame />;
+  if (slug === "move" || slug === "control") return <SkywardGame />;
 
   return (
     <main className="game-stage">

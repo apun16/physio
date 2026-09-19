@@ -52,8 +52,8 @@ const levels = [
     description: "Combine grip force and movement to test strength, timing, and coordination.",
     icon: Zap,
     accent: "control",
-    status: "locked" as LevelStatus,
-    cta: "Locked",
+    status: "ready" as LevelStatus,
+    cta: "Play Now",
     tags: ["Force", "Coordination"]
   }
 ];

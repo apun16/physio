@@ -151,6 +151,26 @@ h1, h2, h3, p { margin-top: 0; }
 .skyward-page .race-header-actions button { font-family: "Determination Mono", monospace; font-size: 12px; }
 .skyward-page .race-footer { font-family: "Determination Mono", monospace; font-size: 13px; letter-spacing: 1px; }
 .skyward-status { position: absolute; z-index: 8; left: 50%; top: 46%; margin: 0; color: var(--paper); font-family: "Determination Mono", monospace; font-size: 18px; letter-spacing: 1px; transform: translate(-50%, -50%); }
+.race-shell canvas.dimmed { filter: brightness(.32) saturate(.6) blur(1px); transition: filter .9s ease; }
+.race-shell canvas { transition: filter .9s ease; }
+.skyward-summary { position: absolute; inset: 0; z-index: 6; display: grid; align-content: center; gap: 20px; justify-items: center; text-align: center; font-family: "Determination Mono", monospace; color: var(--paper); animation: summaryFade .7s ease both; }
+.skyward-summary > * { animation: summaryRise .6s cubic-bezier(.2,.8,.2,1) both; }
+.skyward-summary > :nth-child(2) { animation-delay: .08s; }
+.skyward-summary > :nth-child(3) { animation-delay: .18s; }
+.skyward-summary > :nth-child(4) { animation-delay: .3s; }
+.summary-kicker { color: #f0c44a; letter-spacing: 3px; font-size: 14px; }
+.skyward-summary[data-won="false"] .summary-kicker { color: #ff8a80; }
+.skyward-summary h1 { margin: 0; font-size: 44px; font-weight: 400; text-shadow: 0 3px 0 #000; }
+.skyward-summary dl { display: grid; grid-template-columns: repeat(2, minmax(170px, 1fr)); gap: 12px; margin: 0; }
+.skyward-summary dl div { padding: 14px 20px; border: 2px solid rgba(248,245,220,.8); background: rgba(8,8,12,.7); }
+.skyward-summary dt { font-size: 12px; letter-spacing: 1px; opacity: .7; }
+.skyward-summary dd { margin: 6px 0 0; font-size: 28px; color: #f0c44a; }
+.skyward-summary-actions { display: flex; gap: 12px; }
+.skyward-summary-actions button, .skyward-summary-actions a { font: inherit; font-size: 14px; letter-spacing: 1px; color: #08080c; background: #f0c44a; border: 2px solid #f0c44a; padding: 12px 22px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; transition: transform .15s ease, background .15s ease; }
+.skyward-summary-actions button:hover, .skyward-summary-actions a:hover { transform: translateY(-2px); }
+.skyward-summary-actions a { background: transparent; color: var(--paper); border-color: var(--paper); }
+@keyframes summaryFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes summaryRise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 
 @keyframes cursorBlink { 50% { opacity: 0; } }
 @keyframes statusBlink { 50% { opacity: .35; } }
