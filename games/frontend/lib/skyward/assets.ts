@@ -170,17 +170,16 @@ function extractBlobs(source: HTMLCanvasElement, minArea = 700) {
   for (let start = 0; start < width * height; start += 1) {
     if (seen[start] || !opaque(start)) continue;
     const stack = [start];
+    const members = [start];
     seen[start] = 1;
     let minX = width;
     let minY = height;
     let maxX = 0;
     let maxY = 0;
-    let area = 0;
     while (stack.length) {
       const index = stack.pop() as number;
       const x = index % width;
       const y = (index / width) | 0;
-      area += 1;
       if (x < minX) minX = x;
       if (y < minY) minY = y;
       if (x > maxX) maxX = x;
@@ -192,12 +191,27 @@ function extractBlobs(source: HTMLCanvasElement, minArea = 700) {
         if (Math.abs(nx - x) > 1) continue;
         seen[next] = 1;
         stack.push(next);
+        members.push(next);
       }
     }
-    if (area < minArea) continue;
-    const cropped = canvasFrom(maxX - minX + 1, maxY - minY + 1);
-    cropped.context.drawImage(source, minX, minY, cropped.canvas.width, cropped.canvas.height, 0, 0, cropped.canvas.width, cropped.canvas.height);
-    blobs.push({ sprite: cropped.canvas, x: minX, y: minY, w: cropped.canvas.width, h: cropped.canvas.height, area });
+    if (members.length < minArea) continue;
+    const cw = maxX - minX + 1;
+    const ch = maxY - minY + 1;
+    const cropped = canvasFrom(cw, ch);
+    const data = cropped.context.createImageData(cw, ch);
+    const dest = data.data;
+    for (const index of members) {
+      const x = index % width;
+      const y = (index / width) | 0;
+      const si = index * 4;
+      const di = ((y - minY) * cw + (x - minX)) * 4;
+      dest[di] = pixels[si];
+      dest[di + 1] = pixels[si + 1];
+      dest[di + 2] = pixels[si + 2];
+      dest[di + 3] = pixels[si + 3];
+    }
+    cropped.context.putImageData(data, 0, 0);
+    blobs.push({ sprite: cropped.canvas, x: minX, y: minY, w: cw, h: ch, area: members.length });
   }
   return blobs;
 }
