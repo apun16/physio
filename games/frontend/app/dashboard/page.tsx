@@ -1,154 +1,131 @@
 import {
-  Activity,
   ArrowLeft,
   ArrowRight,
-  Bell,
   CalendarDays,
   ChartNoAxesColumnIncreasing,
+  Gamepad2,
   Gauge,
-  HeartPulse,
-  Lock,
+  Home,
+  Map,
   Move,
-  Play,
+  Settings,
   Sparkles,
-  Timer,
   Trophy,
   Zap
 } from "lucide-react";
 import Link from "next/link";
 
-type LevelStatus = "ready" | "calibrate" | "locked";
-
-const levels = [
+const worlds = [
   {
     slug: "move",
-    number: "01",
-    title: "Move",
+    title: "Skyward",
     subtitle: "Skyward Journey",
-    description: "Walk the woods automatically and use sword, shield, and bow when enemies step in.",
     icon: Move,
-    accent: "move",
-    status: "ready" as LevelStatus,
-    cta: "Play Now",
-    tags: ["Range", "Trajectory"]
+    status: "AVAILABLE",
+    progress: "62%"
   },
   {
     slug: "steer",
-    number: "02",
-    title: "Steer",
-    subtitle: "Pulse Circuit",
-    description: "Drive the course and compare your line against the optimal movement path.",
+    title: "Pulse Circuit",
+    subtitle: "Master the road",
     icon: Gauge,
-    accent: "steer",
-    status: "ready" as LevelStatus,
-    cta: "Play Now",
-    tags: ["Steering", "Accuracy"]
+    status: "CONTINUE",
+    progress: "84%"
   },
   {
     slug: "control",
-    number: "03",
     title: "Control",
     subtitle: "Squeeze + Steer",
-    description: "Combine grip force and movement to test strength, timing, and coordination.",
     icon: Zap,
-    accent: "control",
-    status: "ready" as LevelStatus,
-    cta: "Play Now",
-    tags: ["Force", "Coordination"]
+    status: "AVAILABLE",
+    progress: "0%"
   }
 ];
 
-const statusCopy: Record<LevelStatus, string> = {
-  ready: "Ready to play",
-  calibrate: "Calibration ready",
-  locked: "Finish Steer first"
-};
-
 export default function DashboardPage() {
   return (
-    <main className="dash">
-      <header className="dash-top dashboard-topbar">
-        <div className="dashboard-brand">
-          <Link className="dash-back" href="/"><ArrowLeft size={16} /> Intro</Link>
-          <span className="top-divider" />
-          <span className="logo-mark small" aria-hidden="true" />
-          <span className="logo-word">Pulse<b>Verse</b></span>
-        </div>
-        <div className="dashboard-user">
-          <button className="notification-button" aria-label="Notifications"><Bell size={17} /><i /></button>
-          <div className="user-copy"><strong>Alex Morgan</strong><span>Level 8</span></div>
-          <span className="user-avatar">AM</span>
-        </div>
-      </header>
+    <main className="portal-dashboard">
+      <div className="crt-layer" />
+      <aside className="portal-side">
+        <Link className="portal-side-logo" href="/" aria-label="Pulse Verse home">
+          <span className="pixel-mark" aria-hidden="true"><i /><i /><i /><i /><i /><i /></span>
+        </Link>
+        <nav aria-label="Dashboard navigation">
+          <Link href="/" aria-label="Home"><Home size={18} /></Link>
+          <Link className="active" href="/dashboard" aria-label="Worlds"><Map size={18} /></Link>
+          <Link href="/games/steer" aria-label="Play"><Gamepad2 size={18} /></Link>
+          <button aria-label="Settings"><Settings size={18} /></button>
+        </nav>
+        <span className="portal-avatar">P1</span>
+      </aside>
 
-      <div className="dashboard-wrap">
-        <section className="welcome-panel">
-          <div className="welcome-copy">
-            <span className="intro-kicker">Tuesday training plan</span>
-            <h1>Ready to move?</h1>
-            <p>Your next session is calibrated and waiting. Pick up where you left off or choose another level.</p>
-            <div className="welcome-actions">
-              <Link href="/games/steer"><Play size={16} fill="currentColor" /> Continue session</Link>
-              <button>View progress <ArrowRight size={15} /></button>
+      <div className="portal-dashboard-main">
+        <header className="portal-dashboard-top">
+          <Link href="/"><ArrowLeft size={14} /> BACK TO PORTAL</Link>
+          <div><span>PLAYER 01</span><b>LEVEL 08</b><i>P1</i></div>
+        </header>
+
+        <div className="portal-dashboard-grid">
+          <section className="portal-dashboard-content">
+            <div className="portal-feature">
+              <div className="portal-feature-copy">
+                <span>CONTINUE YOUR JOURNEY</span>
+                <h1>PULSE<br /><b>CIRCUIT</b></h1>
+                <p>Hold your line through the shifting road and complete three clean laps.</p>
+                <Link href="/games/steer">PLAY NOW <ArrowRight size={16} /></Link>
+              </div>
+              <div className="portal-feature-art" aria-hidden="true"><i /><i /><i /></div>
             </div>
-          </div>
-          <div className="weekly-goal">
-            <div className="goal-ring"><span><b>4</b><small>OF 5</small></span></div>
-            <div><span>WEEKLY GOAL</span><strong>One session to go</strong><small>Great consistency this week</small></div>
-          </div>
-          <div className="hero-pulse" aria-hidden="true"><i /><i /><i /><i /><i /></div>
-        </section>
 
-        <section className="metric-row" aria-label="Training overview">
-          <article><span className="metric-icon cyan"><Activity size={18} /></span><div><small>SESSIONS</small><strong>24</strong></div><em>+3 this week</em></article>
-          <article><span className="metric-icon pink"><Timer size={18} /></span><div><small>TRAINING TIME</small><strong>6h 40m</strong></div><em>32m average</em></article>
-          <article><span className="metric-icon yellow"><Trophy size={18} /></span><div><small>BEST STREAK</small><strong>8 days</strong></div><em>Personal best</em></article>
-          <article><span className="metric-icon violet"><ChartNoAxesColumnIncreasing size={18} /></span><div><small>ACCURACY</small><strong>82%</strong></div><em className="positive">↑ 6%</em></article>
-        </section>
+            <section className="portal-worlds">
+              <div className="portal-section-title"><div><span>YOUR WORLDS</span><h2>Choose a game</h2></div><small>2 OF 3 OPEN</small></div>
+              <div className="portal-world-row">
+                {worlds.map((world, index) => {
+                  const Icon = world.icon;
+                  const locked = world.status === "LOCKED";
+                  const content = (
+                    <>
+                      <div className={`portal-card-art art-${world.slug}`}><span>0{index + 1}</span><Icon size={22} /></div>
+                      <div className="portal-card-copy"><small>{world.status}</small><b>{world.title}</b><span>{world.subtitle}</span></div>
+                      <div className="portal-card-progress"><i style={{ width: world.progress }} /><span>{world.progress}</span></div>
+                    </>
+                  );
+                  return locked
+                    ? <div className="portal-game-card locked" key={world.slug}>{content}</div>
+                    : <Link className="portal-game-card" href={`/games/${world.slug}`} key={world.slug}>{content}</Link>;
+                })}
+              </div>
+            </section>
 
-        <div className="dashboard-body">
-          <section className="levels-section">
-            <div className="section-heading"><div><span>TRAINING WORLDS</span><h2>Choose your level</h2></div><button>View all <ArrowRight size={14} /></button></div>
-            <div className="level-grid dashboard-level-grid">
-              {levels.map((level) => {
-                const Icon = level.icon;
-                const locked = level.status === "locked";
-                const className = `level-card accent-${level.accent} status-${level.status}`;
-                const content = (
-                  <>
-                    <span className={`level-motif motif-${level.accent}`} aria-hidden="true" />
-                    <div className="level-card-head"><span className="level-number">LEVEL {level.number}</span><span className="level-status">{locked ? <Lock size={11} /> : <Sparkles size={11} />}{statusCopy[level.status]}</span></div>
-                    <span className="level-icon"><Icon size={24} /></span>
-                    <h2>{level.title}</h2><span className="level-subtitle">{level.subtitle}</span><p>{level.description}</p>
-                    <div className="level-tags">{level.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
-                    <span className="level-cta">{level.cta}{locked ? <Lock size={15} /> : <ArrowRight size={15} />}</span>
-                  </>
-                );
-                return locked ? <div className={className} key={level.slug}>{content}</div> : <Link className={className} href={`/games/${level.slug}`} key={level.slug}>{content}</Link>;
-              })}
-            </div>
+            <section className="portal-progress">
+              <div className="portal-section-title"><div><span>YOUR PROGRESS</span><h2>Movement this month</h2></div><small>SEPTEMBER</small></div>
+              <div className="portal-progress-grid">
+                <div className="portal-progress-stats">
+                  <span><i><Trophy size={15} /></i><small>BEST STREAK</small><b>8 DAYS</b></span>
+                  <span><i><ChartNoAxesColumnIncreasing size={15} /></i><small>ACCURACY</small><b>82%</b></span>
+                  <span><i><Sparkles size={15} /></i><small>SESSIONS</small><b>24</b></span>
+                </div>
+                <div className="portal-chart" aria-label="Monthly movement progress chart">
+                  <svg viewBox="0 0 500 120" preserveAspectRatio="none"><path d="M0 92 C42 82 53 37 94 50 S151 99 194 76 S248 42 284 66 S345 93 379 55 S438 67 500 15" /><path className="fill" d="M0 92 C42 82 53 37 94 50 S151 99 194 76 S248 42 284 66 S345 93 379 55 S438 67 500 15 V120 H0Z" /></svg>
+                  <div><span>W1</span><span>W2</span><span>W3</span><span>W4</span></div>
+                </div>
+              </div>
+            </section>
           </section>
 
-          <aside className="dashboard-rail">
-            <section className="rail-card next-session">
-              <div className="rail-heading"><span>NEXT SESSION</span><CalendarDays size={17} /></div>
-              <strong>Tomorrow, 10:30 AM</strong><p>Upper-body mobility · 25 min</p>
-              <div className="therapist"><span>DR</span><div><strong>Dr. Rivera</strong><small>Physiotherapist</small></div></div>
-              <button>Session details <ArrowRight size={14} /></button>
+          <aside className="portal-dashboard-rail">
+            <section className="portal-rail-heading"><span>JOURNEY</span><b>Alex Morgan</b><small>Explorer · Level 08</small></section>
+            <section className="portal-next-session">
+              <div><span>NEXT SESSION</span><CalendarDays size={17} /></div>
+              <b>Tomorrow</b><strong>10:30 AM</strong><p>Upper-body mobility<br />25 minute session</p>
+              <button>VIEW DETAILS <ArrowRight size={13} /></button>
             </section>
-
-            <section className="rail-card daily-quest">
-              <div className="rail-heading"><span>DAILY QUEST</span><Sparkles size={17} /></div>
-              <div className="quest-gem"><HeartPulse size={24} /></div>
-              <h3>Smooth Operator</h3><p>Complete a movement with 80% trajectory accuracy.</p>
-              <div className="quest-progress"><div><i /></div><span>72%</span></div>
-              <small>REWARD · 150 XP</small>
+            <section className="portal-quest">
+              <span>DAILY QUEST</span><i><Sparkles size={18} /></i><b>Smooth Operator</b>
+              <p>Finish a run with 80% movement accuracy.</p>
+              <div><i /><span>72%</span></div>
             </section>
-
-            <section className="rail-card device-status">
-              <div><i /><span><strong>Device connected</strong><small>IMU + Grip Sensor</small></span></div>
-              <button>Manage</button>
-            </section>
+            <section className="portal-rail-stats"><span><small>XP EARNED</small><b>2,840</b></span><span><small>WORLDS</small><b>02 / 03</b></span></section>
           </aside>
         </div>
       </div>

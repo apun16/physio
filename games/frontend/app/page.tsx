@@ -1,67 +1,40 @@
-import { ArrowRight, CirclePlay, Crosshair, Wifi } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import Link from "next/link";
+import BootIntro from "./boot-intro";
 
 function PixelMark() {
   return <span className="pixel-mark" aria-hidden="true"><i /><i /><i /><i /><i /><i /></span>;
 }
 
-function PortalScene() {
-  return (
-    <div className="portal-scene" aria-hidden="true">
-      <div className="portal-sky"><i /><i /><i /></div>
-      <div className="pixel-sun" />
-      <div className="world-mountains"><i /><i /><i /></div>
-      <div className="pixel-city">{Array.from({ length: 9 }, (_, index) => <i key={index} />)}</div>
-      <div className="game-road"><i /><i /><i /></div>
-      <div className="runner"><i className="runner-head" /><i className="runner-body" /><i className="runner-arm" /><i className="runner-leg one" /><i className="runner-leg two" /></div>
-      <div className="target-ring"><i /><i /><b /></div>
-      <div className="floating-blocks"><i /><i /><i /><i /><i /><i /></div>
-      <div className="portal-hud"><span>ROM LINKED</span><b>98%</b></div>
-      <div className="combo-pop">SMOOTH!<span>+250 XP</span></div>
-    </div>
-  );
-}
-
 export default function HomePage() {
   return (
-    <main className="pixel-home">
+    <main className="world-home">
+      <BootIntro />
       <div className="crt-layer" />
-      <header className="home-header">
+      <header className="world-header">
         <Link className="home-brand" href="/"><PixelMark /><span>PULSE<b>//VERSE</b></span></Link>
-        <nav aria-label="Main navigation"><a className="active" href="#play">PLAY</a><a href="#worlds">WORLDS</a><a href="#how">HOW IT WORKS</a></nav>
-        <div className="connection"><Wifi size={14} /><span>SENSORS ONLINE</span><i /></div>
+        <nav><Link href="/">HOME</Link><Link href="/dashboard">WORLDS</Link><Link href="/games/steer">PLAY</Link></nav>
       </header>
 
-      <section className="home-hero" id="play">
-        <div className="hero-copy">
-          <div className="boot-line"><span>PLAYER 01 READY</span><i /></div>
-          <h1>MOVE YOUR<br />BODY.<span>SHIFT THE<br />WORLD.</span></h1>
-          <p>A real-world movement game where every reach, turn, and squeeze powers your next adventure.</p>
-          <div className="home-actions">
-            <Link className="pixel-primary" href="/dashboard"><span>START SESSION</span><ArrowRight size={18} /></Link>
-            <button className="pixel-secondary"><CirclePlay size={20} /><span>WATCH GAMEPLAY</span></button>
-          </div>
-          <div className="player-strip">
-            <div><b>03</b><span>GAME WORLDS</span></div><i /><div><b>1:1</b><span>LIVE MOVEMENT</span></div><i /><div><b>∞</b><span>WAYS TO LEVEL UP</span></div>
-          </div>
+      <section className="world-hero">
+        <div className="world-shade" />
+        <div className="world-copy">
+          <span>WELCOME TO THE</span>
+          <h1><span>PULSE</span><b>//VERSE</b></h1>
+          <p>YOUR MOVEMENT OPENS WORLDS</p>
+          <Link href="/dashboard">ENTER THE PORTAL <ArrowRight size={17} /></Link>
         </div>
 
-        <div className="portal-wrap">
-          <div className="portal-top"><span>LIVE FEED // LEVEL 02</span><b>REC <i /></b></div>
-          <PortalScene />
-          <div className="portal-corners"><i /><i /><i /><i /></div>
-          <div className="side-tag"><Crosshair size={13} /><span>MOVE TO AIM</span></div>
+        <div className="world-scroll" aria-hidden="true"><i>↑</i><span>EXPLORE</span><i>↓</i></div>
+        <nav className="world-links" aria-label="Game worlds">
+          <Link href="/games/move"><span>01</span><div><b>SKYWARD</b><small>MOVE THROUGH TARGETS</small></div></Link>
+          <Link href="/games/steer"><span>02</span><div><b>PULSE CIRCUIT</b><small>MASTER THE ROAD</small></div></Link>
+          <Link href="/games/control"><span>03</span><div><b>GRIP TEMPLE</b><small>CONTROL THE ENERGY</small></div></Link>
+        </nav>
+        <div className="world-status">
+          <b>PLAYER 01 // READY</b>
         </div>
       </section>
-
-      <section className="world-ribbon" id="worlds">
-        <span className="ribbon-title">CHOOSE YOUR NEXT WORLD</span>
-        <Link href="/games/move"><i className="world-icon move">◆</i><span><small>WORLD 01</small><b>SKYWARD</b></span><em>MOVE</em></Link>
-        <Link href="/games/steer"><i className="world-icon steer">▰</i><span><small>WORLD 02</small><b>NEON CIRCUIT</b></span><em>STEER</em></Link>
-        <Link href="/games/control"><i className="world-icon control">✦</i><span><small>WORLD 03</small><b>GRIP TEMPLE</b></span><em>CONTROL</em></Link>
-      </section>
-
-      <footer className="home-footer"><span>HTN // BUILD 0.8.4</span><b><i /> PRESS START TO BEGIN</b><span>TORONTO, ON</span></footer>
     </main>
   );
 }

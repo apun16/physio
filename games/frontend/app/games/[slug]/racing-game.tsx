@@ -406,6 +406,13 @@ export default function RacingGame() {
       </header>
 
       <section className="race-shell">
+        <div className="race-command-frame" aria-hidden="true"><i /><i /><i /><i /></div>
+        <div className="race-side-readout input-readout">
+          <span>INPUT VECTOR</span><b>{running ? "LIVE" : "STANDBY"}</b><small>IMU // MANUAL</small>
+        </div>
+        <div className="race-side-readout sync-readout">
+          <span>COURSE SYNC</span><b>{Math.max(1, Math.round(snapshot.progress)).toString().padStart(2, "0")}%</b><small>LINE // 02</small>
+        </div>
         <div className="race-hud top-left"><span>LAP</span><strong>{snapshot.lap}<small>/3</small></strong></div>
         <div className="race-hud top-center"><span>TIME TRIAL</span><strong>{snapshot.time}</strong></div>
         <div className="race-hud top-right"><span>COINS</span><strong>◉ {snapshot.coins.toString().padStart(2, "0")}</strong></div>
