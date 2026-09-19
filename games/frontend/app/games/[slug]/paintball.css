@@ -1,0 +1,50 @@
+.paint-page { min-height: 100svh; display: flex; flex-direction: column; background: #12051d; color: #f7f1ff; overflow: hidden; user-select: none; }
+.paint-top, .paint-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 22px; background: #090414; border-bottom: 2px solid #3cf0ff; font-size: 12px; letter-spacing: .12em; }
+.paint-foot { border-bottom: 0; border-top: 2px solid #ff66d2; color: #9befff; }
+.paint-top a, .paint-top button, .paint-foot span { display: flex; align-items: center; gap: 8px; color: inherit; background: none; border: 0; }
+.paint-top-actions { display: flex; align-items: center; gap: 12px; }
+.paint-top div { display: flex; align-items: center; gap: 12px; }
+.paint-top b { padding: 4px 8px; background: #3cf0ff; color: #12051d; font-size: 10px; }
+.paint-stage { position: relative; flex: 1; min-height: 62vh; background: #7eb8d0; cursor: none; }
+.paint-canvas { width: 100%; height: 100%; display: block; cursor: none; }
+.paint-card, .paint-top, .paint-foot, .paint-debug, .paint-top a, .paint-top button { cursor: auto; }
+.paint-cross { position: absolute; left: 50%; top: 50%; width: 28px; height: 28px; translate: -50% -50%; pointer-events: none; }
+.paint-cross i { position: absolute; background: #f8ff6a; }
+.paint-cross i:first-child { left: 12px; top: 0; width: 3px; height: 28px; }
+.paint-cross i:last-of-type { left: 0; top: 12px; width: 28px; height: 3px; }
+.paint-cross b { position: absolute; inset: 11px; border: 2px solid #3cf0ff; }
+.paint-hud { position: absolute; inset: 16px 18px auto; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; pointer-events: none; }
+.paint-hearts { display: flex; gap: 6px; }
+.paint-hearts span { width: 16px; height: 16px; background: #3a2148; clip-path: polygon(50% 8%, 100% 38%, 82% 100%, 18% 100%, 0 38%); }
+.paint-hearts span[data-on="true"] { background: #3cf0ff; }
+.paint-meta { display: flex; gap: 12px; align-items: baseline; font-family: "Press Start 2P", monospace; font-size: 9px; flex-wrap: wrap; justify-content: flex-end; }
+.paint-status { position: absolute; right: 18px; top: 52px; display: flex; flex-direction: column; gap: 4px; }
+.paint-status em { font-style: normal; font-size: 10px; letter-spacing: .14em; color: #6d6788; }
+.paint-status em[data-on="true"] { color: #7bff4a; }
+.paint-aim-banner { position: absolute; left: 50%; bottom: 18%; translate: -50% 0; padding: 8px 14px; border: 2px solid #7bff4a; background: rgba(8,4,16,.82); font-family: "Press Start 2P", monospace; font-size: 9px; color: #7bff4a; pointer-events: none; }
+.paint-toast { position: absolute; left: 50%; top: 22%; translate: -50% 0; font-family: "Press Start 2P", monospace; font-size: 16px; color: #f8ff6a; text-shadow: 0 0 18px #3cf0ff; }
+.paint-toast[data-kind="dodge"] { color: #7bff4a; }
+.paint-toast[data-kind="hurt"] { color: #ff4da8; }
+.paint-flash { position: absolute; inset: 0; background: radial-gradient(circle, transparent 42%, #ff4da8 100%); pointer-events: none; }
+.paint-count { position: absolute; inset: 0; display: grid; place-items: center; font-family: "Press Start 2P", monospace; font-size: 84px; color: #fff56c; }
+.paint-card { position: absolute; inset: 10% 16%; display: flex; flex-direction: column; justify-content: center; gap: 12px; padding: 32px; background: linear-gradient(160deg, rgba(18,5,29,.94), rgba(18,40,70,.92)); border: 3px solid #3cf0ff; box-shadow: 10px 10px 0 #ff66d2; }
+.paint-card h1 { margin: 0; font-family: "Press Start 2P", monospace; font-size: 26px; line-height: 1.25; color: #fff56c; }
+.paint-card span { color: #3cf0ff; letter-spacing: .2em; font-size: 11px; }
+.paint-card p, .paint-card small { color: #d9c8ff; }
+.paint-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.paint-modes button, .paint-actions button { text-align: left; border: 2px solid #5b3d78; background: #1c0a2c; padding: 10px 12px; color: inherit; }
+.paint-modes button[data-on="true"], .paint-actions .go { border-color: #7bff4a; color: #7bff4a; }
+.paint-modes b { display: block; }
+.paint-modes small { display: block; margin-top: 4px; color: #ae9cc8; }
+.paint-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.paint-actions a { color: #3cf0ff; }
+.paint-debug { position: absolute; left: 16px; bottom: 16px; width: 250px; display: grid; gap: 6px; padding: 12px; background: rgba(8,4,16,.92); border: 2px solid #3cf0ff; font-size: 11px; }
+.paint-debug label { display: grid; gap: 2px; }
+.paint-debug-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.paint-debug-row button, .paint-debug button { border: 1px solid #3cf0ff; background: #140826; color: #3cf0ff; }
+
+@media (max-width: 800px) {
+  .paint-card { inset: 6% 6%; padding: 18px; }
+  .paint-card h1 { font-size: 18px; }
+  .paint-modes { grid-template-columns: 1fr; }
+}

@@ -2,11 +2,13 @@ import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import RacingGame from "./racing-game";
 import SkywardGame from "./skyward-game";
+import PaintballGameView from "./paintball-game";
 
 const titles: Record<string, string> = {
   move: "Move",
   steer: "Steer",
-  control: "Control"
+  control: "Control",
+  paintball: "Inkburst"
 };
 
 export default async function GamePage({ params }: { params: Promise<{ slug: string }> }) {
@@ -15,6 +17,7 @@ export default async function GamePage({ params }: { params: Promise<{ slug: str
 
   if (slug === "steer") return <RacingGame />;
   if (slug === "move" || slug === "control") return <SkywardGame />;
+  if (slug === "paintball") return <PaintballGameView />;
 
   return (
     <main className="game-stage">
