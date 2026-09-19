@@ -60,3 +60,34 @@ The experience produces interpretable rehabilitation signals instead of only a s
 - fatigue or performance change across a session
 
 An OpenAI-powered performance summary can translate those measurements into a concise patient-facing recap and a therapist-facing session note. It should cite the measured values it used and clearly label observations as observations rather than medical diagnoses.
+
+## Pulse Circuit (Level 2 Prototype)
+
+A hardware-ready pseudo-3D steering game built with Python and Pygame, implementing the "Steer" level described above. Lives in `games/frontend/`.
+
+### Run locally
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
+
+### Controls
+
+- Left / right arrow keys: steer
+- A / D: steer
+- Acceleration is automatic
+- Escape: quit
+
+The game consumes normalized steering through the `SteeringSource` protocol in
+`main.py`. A future serial, Bluetooth, or HID adapter can replace
+`KeyboardSteering` without changing the race simulation.
+
+### Verify
+
+```bash
+python -m py_compile main.py
+SDL_VIDEODRIVER=dummy python main.py --smoke-test
+```

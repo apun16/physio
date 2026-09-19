@@ -1,2 +1,21 @@
-/.next
-/node_modules
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Local artifacts from the retired web prototype
+/node_modules/
+/.next/
+
+# local environment
+.env*
+!.env.example
+
+# editor and OS files
+.DS_Store
+.idea/
+.vscode/
