@@ -2,10 +2,10 @@ import { ENCOUNTERS, type EnemySpec, type Encounter, zoneAt } from "./encounters
 import { VALID_SLASHES, type GameAction, type SlashDirection } from "./input";
 
 export const WALK_SPEED = 150;
-export const SLASH_REACH = 210;
+export const SLASH_REACH = 280;
 export const ARROW_SPEED = 520;
 export const MAX_ARROWS = 10;
-export const STRONG_HIT = 0.75;
+export const STRONG_HIT = 0.5;
 
 export type Phase = "intro" | "travel" | "combat" | "victory" | "dead" | "complete";
 
@@ -36,6 +36,7 @@ export type EnemyState = {
   phase: number;
   alive: boolean;
   hitReact: number;
+  age: number;
 };
 
 export type Projectile = {
@@ -62,6 +63,8 @@ export type Impact = {
   t: number;
   life: number;
   blocked: boolean;
+  label?: string;
+  hurt?: boolean;
 };
 
 export type Dialogue = {
@@ -100,6 +103,7 @@ export class JourneyState {
   };
   pendingHit: { wait: number; slash: Extract<GameAction, { type: "SwordSlash" }> } | null = null;
   victoryT = 0;
+  endT = 0;
   introT = 0;
   zoneAnnounced = "forest";
   lastShieldLine = 0;
@@ -162,10 +166,12 @@ export class JourneyState {
       return;
     }
     if (this.phase === "dead") {
+      this.endT += dt;
       this.hero.anim = "hurt";
       return;
     }
     if (this.phase === "complete") {
+      this.endT += dt;
       this.hero.anim = "victory";
       return;
     }
@@ -214,13 +220,14 @@ export class JourneyState {
       hp: encounter.enemy.maxHp,
       x: this.hero.x + encounter.enemy.preferredGap,
       windup: 0,
-      cooldown: 0.8,
+      cooldown: 2.2,
       shield: Boolean(encounter.enemy.hasShield),
       stun: 0,
       flash: 0,
       phase: 1,
       alive: true,
-      hitReact: 0
+      hitReact: 0,
+      age: 0
     };
     this.dialogue = { text: encounter.line, shown: 0, duration: 4.2 };
     this.projectiles = [];
@@ -235,12 +242,13 @@ export class JourneyState {
       this.dialogue = { text: "* Down. The path opens again.", shown: 0, duration: 3.2 };
       return;
     }
+    enemy.age += dt;
     enemy.flash = Math.max(0, enemy.flash - dt);
     enemy.stun = Math.max(0, enemy.stun - dt);
     enemy.hitReact = Math.max(0, enemy.hitReact - dt);
     if (enemy.spec.hasShield) {
-      const cycle = (this.elapsed * (enemy.spec.elite ? 1.15 : 0.85)) % 2.4;
-      enemy.shield = cycle < 1.35 || enemy.windup > 0;
+      const cycle = (this.elapsed * 0.7) % 2.6;
+      enemy.shield = cycle < 1.0 && enemy.windup <= 0;
     }
     if (enemy.stun <= 0) this.enemyAi(dt, enemy);
     if (this.hero.attackLock <= 0 && this.hero.hurtT <= 0) {
@@ -279,7 +287,7 @@ export class JourneyState {
       this.projectiles.push({
         x: enemy.x - 20,
         y: 42,
-        vx: -340,
+        vx: -230,
         vy: enemy.spec.boss ? -20 : 0,
         fromHero: false,
         life: 1.6,
@@ -287,16 +295,16 @@ export class JourneyState {
       });
       return;
     }
-    if (enemy.x - this.hero.x > SLASH_REACH + 10) return;
+    if (enemy.x - this.hero.x > SLASH_REACH + 60) return;
     this.heroHit(enemy.spec.touchDamage);
   }
 
   private heroHit(damage: number) {
     if (this.hero.invuln > 0) return;
     if (this.hero.shield) {
-      this.impacts.push({ x: this.hero.x + 70, y: 50, t: 0, life: 0.28, blocked: true });
+      this.impacts.push({ x: this.hero.x + 70, y: 50, t: 0, life: 0.6, blocked: true, label: "BLOCK" });
       if (this.enemy) {
-        this.enemy.stun = 0.38;
+        this.enemy.stun = 0.9;
         this.enemy.x += 36;
       }
       this.shake = Math.max(this.shake, 0.12);
@@ -306,8 +314,10 @@ export class JourneyState {
       }
       return;
     }
-    this.hero.hp = Math.max(0, this.hero.hp - Math.max(1, Math.round(damage)));
-    this.hero.invuln = 0.85;
+    const lost = Math.max(1, Math.round(damage));
+    this.hero.hp = Math.max(0, this.hero.hp - lost);
+    this.impacts.push({ x: this.hero.x + 40, y: 110, t: 0, life: 0.8, blocked: false, hurt: true, label: `-${lost}` });
+    this.hero.invuln = 1.4;
     this.hero.hurtT = 0.4;
     this.hero.anim = "hurt";
     this.hero.animT = 0;
@@ -326,7 +336,7 @@ export class JourneyState {
     this.hero.bowDraw = 0;
     this.hero.anim = `slash_${slash.direction}`;
     this.hero.animT = 0;
-    this.hero.attackLock = 0.42;
+    this.hero.attackLock = 0.3;
     this.trails.push({
       direction: slash.direction,
       originX: this.hero.x + 40,
@@ -351,7 +361,7 @@ export class JourneyState {
     if (!enemy || !enemy.alive || this.phase !== "combat") return;
     if (enemy.x - this.hero.x > SLASH_REACH) return;
     if (enemy.shield && slash.direction === "horizontal") {
-      this.impacts.push({ x: enemy.x - 30, y: 48, t: 0, life: 0.28, blocked: true });
+      this.impacts.push({ x: enemy.x - 30, y: 48, t: 0, life: 0.6, blocked: true, label: "BLOCKED" });
       this.dialogue = { text: "* The board ate that one. Go over it.", shown: 0, duration: 3.2 };
       return;
     }
@@ -360,11 +370,11 @@ export class JourneyState {
 
   private slashDamage(slash: Extract<GameAction, { type: "SwordSlash" }>, enemy: EnemyState) {
     const velocity = Math.max(0.15, Math.min(1.4, slash.velocity));
-    let damage = 1.15 * velocity;
+    let damage = 1.4 * Math.max(velocity, 0.6);
     if (slash.direction === "vertical") damage *= enemy.shield || enemy.spec.hasShield ? 1.35 : 1.05;
     else if (slash.direction === "diagonal") damage *= 1.15;
-    if (enemy.spec.armored) damage *= velocity < STRONG_HIT ? 0.38 : 1.25;
-    if (enemy.spec.boss && enemy.phase === 3 && slash.direction !== "vertical") damage *= 0.55;
+    if (enemy.spec.armored) damage *= velocity < STRONG_HIT ? 0.7 : 1.25;
+    
     return damage;
   }
 
@@ -375,7 +385,7 @@ export class JourneyState {
     enemy.flash = 0.18;
     enemy.hitReact = 0.22;
     enemy.x += strong ? 28 : 14;
-    this.impacts.push({ x: enemy.x - 20, y: 40, t: 0, life: 0.28, blocked: false });
+    this.impacts.push({ x: enemy.x - 20, y: 40, t: 0, life: 0.6, blocked: false, label: strong ? "STRONG!" : "HIT" });
     if (strong) this.shake = Math.max(this.shake, 0.34);
     if (enemy.hp <= 0) {
       enemy.alive = false;
@@ -422,8 +432,8 @@ export class JourneyState {
       if (shot.life <= 0) continue;
       if (shot.fromHero) {
         const enemy = this.enemy;
-        if (enemy && enemy.alive && Math.abs(shot.x - enemy.x) < 48 && Math.abs(shot.y - 40) < 70) {
-          if (enemy.shield && !enemy.spec.boss) this.impacts.push({ x: enemy.x - 24, y: 44, t: 0, life: 0.28, blocked: true });
+        if (enemy && enemy.alive && Math.abs(shot.x - enemy.x) < 70 && Math.abs(shot.y - 40) < 100) {
+          if (enemy.shield && !enemy.spec.boss) this.impacts.push({ x: enemy.x - 24, y: 44, t: 0, life: 0.6, blocked: true, label: "BLOCKED" });
           else this.hurtEnemy(shot.power * (enemy.spec.ranged ? 1.1 : 0.7), shot.power > 1.2);
           continue;
         }

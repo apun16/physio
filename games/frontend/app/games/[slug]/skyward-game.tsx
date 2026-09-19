@@ -6,13 +6,19 @@ import { useEffect, useRef, useState } from "react";
 import { loadSkywardAssets, type SkywardAssets } from "@/lib/skyward/assets";
 import { DebugInputProvider } from "@/lib/skyward/input";
 import { drawSkyward, HEIGHT, WIDTH } from "@/lib/skyward/render";
+import { ENCOUNTERS } from "@/lib/skyward/encounters";
 import { JourneyState } from "@/lib/skyward/state";
+
+type Summary = { won: boolean; time: number; hp: number; maxHp: number; arrows: number; cleared: number; total: number };
+
+const formatTime = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 
 export default function SkywardGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const resetRef = useRef(0);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState("");
+  const [summary, setSummary] = useState<Summary | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -23,6 +29,7 @@ export default function SkywardGame() {
     let last = performance.now();
     let assets: SkywardAssets | null = null;
     let state = new JourneyState();
+    let summaryShown = false;
     let previousReset = resetRef.current;
     const input = new DebugInputProvider();
     input.attach(canvas);
@@ -33,6 +40,7 @@ export default function SkywardGame() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() === "r" && (state.phase === "dead" || state.phase === "complete")) {
         state = new JourneyState();
+        setSummary(null);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -54,11 +62,17 @@ export default function SkywardGame() {
       if (previousReset !== resetRef.current) {
         state = new JourneyState();
         previousReset = resetRef.current;
+        setSummary(null);
       }
       if (assets) {
         state.apply(input.poll());
         state.update(dt);
         drawSkyward(context, state, assets, true);
+        const over = state.phase === "complete" || state.phase === "dead";
+        if (over && !summaryShown && state.endT > 0.35) {
+          summaryShown = true;
+          setSummary({ won: state.phase === "complete", time: state.elapsed, hp: state.hero.hp, maxHp: state.hero.maxHp, arrows: state.hero.arrows, cleared: state.cleared, total: ENCOUNTERS.length });
+        } else if (!over) summaryShown = false;
       } else {
         context.fillStyle = "#070810";
         context.fillRect(0, 0, WIDTH, HEIGHT);
@@ -91,7 +105,23 @@ export default function SkywardGame() {
         </div>
       </header>
       <section className="race-shell">
-        <canvas ref={canvasRef} width={WIDTH} height={HEIGHT} tabIndex={0} aria-label="Skyward Journey side-view physiotherapy session" />
+        <canvas ref={canvasRef} width={WIDTH} height={HEIGHT} tabIndex={0} className={summary ? "dimmed" : undefined} aria-label="Skyward Journey side-view physiotherapy session" />
+        {summary && (
+          <div className="skyward-summary" data-won={summary.won}>
+            <span className="summary-kicker">{summary.won ? "JOURNEY'S END" : "REST"}</span>
+            <h1>{summary.won ? "Session complete" : "Session over"}</h1>
+            <dl>
+              <div><dt>Time</dt><dd>{formatTime(summary.time)}</dd></div>
+              <div><dt>Enemies cleared</dt><dd>{summary.cleared}/{summary.total}</dd></div>
+              <div><dt>Health left</dt><dd>{summary.hp}/{summary.maxHp}</dd></div>
+              <div><dt>Arrows left</dt><dd>{summary.arrows}</dd></div>
+            </dl>
+            <div className="skyward-summary-actions">
+              <button onClick={() => { resetRef.current += 1; }}><RotateCcw size={15} /> REPLAY</button>
+              <Link href="/dashboard">QUEST HUB</Link>
+            </div>
+          </div>
+        )}
         {failed && <p className="skyward-status">{failed}</p>}
         {!ready && !failed && <p className="skyward-status">Calibrating session...</p>}
       </section>

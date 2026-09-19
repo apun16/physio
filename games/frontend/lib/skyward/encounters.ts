@@ -39,10 +39,10 @@ export type Encounter = {
 export const GOBLIN: EnemySpec = {
   kind: "goblin",
   title: "Forest Scamp",
-  maxHp: 3,
+  maxHp: 2,
   touchDamage: 1,
-  attackPeriod: 2.15,
-  telegraph: 0.55,
+  attackPeriod: 3.6,
+  telegraph: 1.1,
   moveSpeed: 55,
   preferredGap: 150
 };
@@ -50,10 +50,10 @@ export const GOBLIN: EnemySpec = {
 export const SHIELD_BEAST: EnemySpec = {
   kind: "shield_beast",
   title: "Oakhide Brute",
-  maxHp: 4,
+  maxHp: 3,
   touchDamage: 1,
-  attackPeriod: 2,
-  telegraph: 0.5,
+  attackPeriod: 3.6,
+  telegraph: 1.1,
   moveSpeed: 40,
   preferredGap: 165,
   hasShield: true
@@ -62,10 +62,10 @@ export const SHIELD_BEAST: EnemySpec = {
 export const ARCHER: EnemySpec = {
   kind: "archer",
   title: "Hollowbow Scout",
-  maxHp: 3,
+  maxHp: 2,
   touchDamage: 1,
-  attackPeriod: 1.7,
-  telegraph: 0.4,
+  attackPeriod: 3.2,
+  telegraph: 1.0,
   moveSpeed: 35,
   preferredGap: 310,
   ranged: true
@@ -74,10 +74,10 @@ export const ARCHER: EnemySpec = {
 export const ARMORED: EnemySpec = {
   kind: "armored",
   title: "Ashen Knight",
-  maxHp: 5,
+  maxHp: 4,
   touchDamage: 1,
-  attackPeriod: 1.35,
-  telegraph: 0.32,
+  attackPeriod: 3.0,
+  telegraph: 1.0,
   moveSpeed: 70,
   preferredGap: 155,
   armored: true
@@ -86,10 +86,10 @@ export const ARMORED: EnemySpec = {
 export const ELITE: EnemySpec = {
   kind: "elite",
   title: "Crimson Captain",
-  maxHp: 6,
+  maxHp: 5,
   touchDamage: 1,
-  attackPeriod: 1.25,
-  telegraph: 0.34,
+  attackPeriod: 2.9,
+  telegraph: 1.0,
   moveSpeed: 62,
   preferredGap: 180,
   hasShield: true,
@@ -100,10 +100,10 @@ export const ELITE: EnemySpec = {
 export const BOSS: EnemySpec = {
   kind: "boss",
   title: "Horned Warlord",
-  maxHp: 10,
-  touchDamage: 2,
-  attackPeriod: 1.15,
-  telegraph: 0.38,
+  maxHp: 8,
+  touchDamage: 1,
+  attackPeriod: 2.8,
+  telegraph: 1.1,
   moveSpeed: 48,
   preferredGap: 190,
   hasShield: true,
