@@ -7,8 +7,8 @@ import { HandTracker } from "../../../lib/racing/camera";
 import { TrajectoryRecorder, coinLane, type TrajectoryReport } from "../../../lib/racing/trajectory";
 import TrajectoryChart from "./trajectory-chart";
 import { requestAnalysis, type AnalysisResult } from "../../../lib/rehab/analysis";
-import { buildRacingAnalysis } from "../../../lib/racing/analysis";
-import { LEVELS, RehabRecorder, ROAD_HALF_WIDTH, loadProfile, loadSessions, recommend, saveLevel, saveSession, type RehabProfile, type SessionSummary } from "../../../lib/racing/rehab";
+import { buildRacingAnalysis, proposeTuning } from "../../../lib/racing/analysis";
+import { LEVELS, RehabRecorder, ROAD_HALF_WIDTH, loadProfile, loadSessions, recommend, saveLevel, saveSession, saveTuning, clearTuning, type RehabProfile, type SessionSummary } from "../../../lib/racing/rehab";
 import { SerialSensor, sensorLog } from "../../../lib/racing/sensor";
 
 const COIN_SPACING = 520;
@@ -443,7 +443,26 @@ export default function RacingGame() {
     reset();
   };
 
+  const applyTuning = () => {
+    if (!proposal) return;
+    saveTuning(proposal.tuning);
+    const tuned = { ...profile, laneSpread: proposal.tuning.laneSpread, pickupWindow: proposal.tuning.pickupWindow, tuned: true };
+    profileRef.current = tuned;
+    setProfile(tuned);
+    reset();
+  };
+
+  const resetTuning = () => {
+    clearTuning();
+    const stock = LEVELS[profile.level - 1];
+    profileRef.current = stock;
+    setProfile(stock);
+    reset();
+  };
+
   const next = summary ? recommend(summary, profile) : null;
+  const proposal = summary && analysis && analysis !== "loading" ? proposeTuning(analysis, summary, profile) : null;
+  const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
   const sensorConnected = sensorStatus === "connected";
   const handMode = inputMode === "hand";
   const inputReady = handMode ? cameraStatus === "live" : sensorConnected;
@@ -492,7 +511,7 @@ export default function RacingGame() {
         </div>
         {!handMode && sensorConnected && !snapshot.finished && (
           <div className="sensor-panel">
-            <span>LEVEL {profile.level} · {profile.label.toUpperCase()}</span>
+            <span>LEVEL {profile.level} · {profile.label.toUpperCase()}{profile.tuned ? " · AI-TUNED" : ""}</span>
             <div className="sensor-steps">
               <button onClick={() => sensor.send("center")}>1 · HOLD NEUTRAL, SET CENTER</button>
               <button onClick={() => sensor.send("rollRight")}>2 · TURN RIGHT, SAVE LIMIT</button>
@@ -543,6 +562,14 @@ export default function RacingGame() {
                         <ul>{analysis.observations.map((line) => <li key={line}>{line}</li>)}</ul>
                         <p>{analysis.progress}</p>
                         <p>TRY NEXT: {analysis.nextStep}</p>
+                        {proposal && (
+                          <div className="coach-tune">
+                            <span>AI-TUNED NEXT RACE</span>
+                            <p>Reach {signed(proposal.laneDelta)} · Pickup window {signed(proposal.windowDelta)}{proposal.reason ? ` — ${proposal.reason}` : ""}</p>
+                            <button onClick={applyTuning}>USE TUNED SETTINGS</button>
+                          </div>
+                        )}
+                        <small>{analysis.provider.toUpperCase()} · {analysis.model} · {(analysis.ms / 1000).toFixed(1)}s{analysis.completionTokens ? ` · ${analysis.completionTokens} tok` : ""}</small>
                       </>
                     )}
                   </div>
@@ -551,6 +578,7 @@ export default function RacingGame() {
                 {next.action !== "repeat" && <button onClick={() => changeLevel(profile.level + (next.action === "advance" ? 1 : -1))}>{next.action === "advance" ? `TRY LEVEL ${profile.level + 1}` : `DROP TO LEVEL ${profile.level - 1}`}</button>}
               </div>
             )}
+            {profile.tuned && <button className="tune-reset" onClick={resetTuning}>RESET AI TUNING</button>}
             <div className="finish-actions">
               <button onClick={reset}><RotateCcw size={15} /> RACE AGAIN</button>
               <Link href="/dashboard">QUEST HUB <ArrowLeft size={15} /></Link>

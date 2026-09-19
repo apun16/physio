@@ -16,6 +16,8 @@ export interface RehabProfile {
   pickupWindow: number;
   /** Session results needed before we recommend the next level. */
   advance: { minAccuracy: number; minOnRoad: number; minSmoothness: number };
+  /** true when laneSpread/pickupWindow carry AI-proposed values the player accepted */
+  tuned?: boolean;
 }
 
 export const LEVELS: RehabProfile[] = [
@@ -27,8 +29,15 @@ export const LEVELS: RehabProfile[] = [
 
 export const ROAD_HALF_WIDTH = 0.92;
 
+/** Hard limits for AI-tuned settings and the biggest change allowed per session. */
+export const TUNING_BOUNDS = {
+  laneSpread: { min: 0.3, max: 0.9, maxStep: 0.1 },
+  pickupWindow: { min: 0.2, max: 0.36, maxStep: 0.04 }
+} as const;
+
 const LEVEL_KEY = "physio.racing.level";
 const LOG_KEY = "physio.racing.sessions";
+const TUNING_KEY = "physio.racing.tuning";
 
 function readStorage(key: string) {
   try { return window.localStorage.getItem(key); } catch { return null; }
@@ -37,13 +46,38 @@ function writeStorage(key: string, value: string) {
   try { window.localStorage.setItem(key, value); } catch { /* storage unavailable */ }
 }
 
+export interface Tuning { level: number; laneSpread: number; pickupWindow: number }
+
 export function loadProfile(): RehabProfile {
   const saved = Number(readStorage(LEVEL_KEY));
-  return LEVELS[Number.isInteger(saved) && saved >= 1 && saved <= LEVELS.length ? saved - 1 : 0];
+  const base = LEVELS[Number.isInteger(saved) && saved >= 1 && saved <= LEVELS.length ? saved - 1 : 0];
+  try {
+    const tuning = JSON.parse(readStorage(TUNING_KEY) || "null") as Tuning | null;
+    if (tuning && tuning.level === base.level && Number.isFinite(tuning.laneSpread) && Number.isFinite(tuning.pickupWindow)) {
+      const { laneSpread: l, pickupWindow: w } = TUNING_BOUNDS;
+      return {
+        ...base,
+        tuned: true,
+        laneSpread: Math.max(l.min, Math.min(l.max, tuning.laneSpread)),
+        pickupWindow: Math.max(w.min, Math.min(w.max, tuning.pickupWindow))
+      };
+    }
+  } catch { /* corrupt tuning: fall back to the stock level */ }
+  return base;
 }
 
+/** Changing level drops any AI tuning so the new level starts from its stock settings. */
 export function saveLevel(level: number) {
   writeStorage(LEVEL_KEY, String(level));
+  writeStorage(TUNING_KEY, "");
+}
+
+export function saveTuning(tuning: Tuning) {
+  writeStorage(TUNING_KEY, JSON.stringify(tuning));
+}
+
+export function clearTuning() {
+  writeStorage(TUNING_KEY, "");
 }
 
 export interface SessionSummary {
@@ -64,6 +98,9 @@ export interface SessionSummary {
   peakRightDeg: number;
   peakLeftDeg: number;
   signalDrops: number;
+  /** difficulty settings this session ran with (absent in older logs) */
+  laneSpread?: number;
+  pickupWindow?: number;
   /** 0..100 similarity to the optimal coin line; only set when the camera tracked the hand */
   pathScore?: number;
 }
@@ -146,7 +183,9 @@ export class RehabRecorder {
       sweeps: this.sweeps,
       peakRightDeg: Math.round(this.peakRight),
       peakLeftDeg: Math.round(this.peakLeft),
-      signalDrops: this.drops
+      signalDrops: this.drops,
+      laneSpread: this.profile.laneSpread,
+      pickupWindow: this.profile.pickupWindow
     };
   }
 }

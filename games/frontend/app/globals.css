@@ -527,3 +527,8 @@ h1, h2, h3, p { margin-top: 0; }
 .coach-note strong { color: var(--paper); font-size: 10px; line-height: 1.4; }
 .coach-note ul { margin: 0; padding-left: 14px; color: #c3c9dd; font-size: 8px; line-height: 1.6; }
 .coach-note p { margin: 0; color: #9199b2; font-size: 8px; line-height: 1.5; text-align: left; }
+.coach-note small { color: #626b87; font-size: 7px; letter-spacing: .8px; }
+.coach-tune { display: flex; flex-direction: column; gap: 4px; padding: 7px 9px; border: 1px dashed var(--yellow); }
+.coach-tune > span { color: var(--yellow); font-size: 7px; font-weight: 700; letter-spacing: 1px; }
+.coach-tune button, .tune-reset { align-self: flex-start; padding: 6px 10px; border: 2px solid var(--yellow); background: transparent; color: var(--yellow); font-size: 7px; font-weight: 700; letter-spacing: .8px; }
+.tune-reset { margin-top: 8px; border-color: #3a4263; color: #9199b2; }
