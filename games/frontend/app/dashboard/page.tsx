@@ -11,7 +11,8 @@ import {
   Settings,
   Sparkles,
   Trophy,
-  Zap
+  Zap,
+  Crosshair
 } from "lucide-react";
 import Link from "next/link";
 
@@ -37,6 +38,14 @@ const worlds = [
     title: "Control",
     subtitle: "Squeeze + Steer",
     icon: Zap,
+    status: "AVAILABLE",
+    progress: "0%"
+  },
+  {
+    slug: "paintball",
+    title: "Inkburst",
+    subtitle: "Squeeze, aim, splat",
+    icon: Crosshair,
     status: "AVAILABLE",
     progress: "0%"
   }
