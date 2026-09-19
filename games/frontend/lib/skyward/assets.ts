@@ -260,13 +260,6 @@ function hasFlame(source: HTMLCanvasElement) {
   return false;
 }
 
-function cropTalkPortrait(actions: HTMLCanvasElement) {
-  const cleaned = floodKey(actions, isPaper);
-  const cell = canvasFrom(140, 120);
-  cell.context.drawImage(cleaned, 1096, 244, 140, 120, 0, 0, 140, 120);
-  return cropAlpha(cell.canvas, 1);
-}
-
 export type SkywardAssets = {
   idle: Sprite;
   walk: Sprite[];
@@ -287,6 +280,7 @@ export type SkywardAssets = {
 
 export async function loadSkywardAssets(): Promise<SkywardAssets> {
   const layerFiles = (set: string) => [1, 2, 3, 4, 5].map((index) => loadImage(`/skyward/pack/bg/${set}/layer${index}.png`));
+  const portraitLoad = loadImage("/skyward/generated/hero_portrait.png");
   const [
     walkImg,
     actionsImg,
@@ -346,6 +340,7 @@ export async function loadSkywardAssets(): Promise<SkywardAssets> {
     ...[1, 2, 3, 4, 5, 6].map((index) => loadImage(`/skyward/pack/cloud${index}.png`)),
     ...[1, 2, 3, 4].map((index) => loadImage(`/skyward/pack/birds${index}.png`))
   ]);
+  const portraitImg = await portraitLoad;
 
   const nLayers = rest.slice(0, 5) as HTMLImageElement[];
   const aLayers = rest.slice(5, 10) as HTMLImageElement[];
@@ -449,7 +444,7 @@ export async function loadSkywardAssets(): Promise<SkywardAssets> {
     hero,
     enemies,
     gear,
-    portrait: asSprite(cropTalkPortrait(drawImage(actionsImg).canvas), 1),
+    portrait: asSprite(cropAlpha(floodKey(drawImage(portraitImg).canvas, isPaper), 1), 1),
     trees,
     grassEdge,
     layers,

@@ -308,7 +308,7 @@ function drawDialogue(ctx: CanvasRenderingContext2D, assets: SkywardAssets, stat
   ctx.strokeStyle = "#18161c";
   ctx.lineWidth = 2;
   ctx.strokeRect(box.x + 4, box.y + 4, box.w - 8, box.h - 8);
-  const portrait = drawSpriteContain(ctx, assets.portrait, { x: box.x + 12, y: box.y + 12, w: 92, h: 94 }, "center");
+  const portrait = drawSpriteContain(ctx, assets.portrait, { x: box.x + 10, y: box.y + 8, w: 108, h: 102 }, "center");
   const chars = Math.floor(state.dialogue.shown * 38);
   const text = state.dialogue.text.slice(0, chars);
   ctx.fillStyle = "#f8f5dc";
