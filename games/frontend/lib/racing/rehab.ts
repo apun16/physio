@@ -64,6 +64,8 @@ export interface SessionSummary {
   peakRightDeg: number;
   peakLeftDeg: number;
   signalDrops: number;
+  /** 0..100 similarity to the optimal coin line; only set when the camera tracked the hand */
+  pathScore?: number;
 }
 
 export type Recommendation = { action: "advance" | "repeat" | "ease"; reason: string };
@@ -154,4 +156,8 @@ export function saveSession(summary: SessionSummary) {
     const log = JSON.parse(readStorage(LOG_KEY) ?? "[]") as SessionSummary[];
     writeStorage(LOG_KEY, JSON.stringify([...log, summary].slice(-50)));
   } catch { /* corrupt log: skip rather than block the finish screen */ }
+}
+
+export function loadSessions(): SessionSummary[] {
+  try { return JSON.parse(readStorage(LOG_KEY) ?? "[]") as SessionSummary[]; } catch { return []; }
 }

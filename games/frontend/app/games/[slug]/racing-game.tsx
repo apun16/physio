@@ -1,12 +1,22 @@
 "use client";
 
-import { ArrowLeft, Bluetooth, Gauge, Pause, Play, RotateCcw, Volume2 } from "lucide-react";
+import { ArrowLeft, Bluetooth, Camera, Gauge, Pause, Play, RotateCcw, Volume2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { LEVELS, RehabRecorder, ROAD_HALF_WIDTH, loadProfile, recommend, saveLevel, saveSession, type RehabProfile, type SessionSummary } from "../../../lib/racing/rehab";
+import { HandTracker } from "../../../lib/racing/camera";
+import { TrajectoryRecorder, coinLane, type TrajectoryReport } from "../../../lib/racing/trajectory";
+import TrajectoryChart from "./trajectory-chart";
+import { requestAnalysis, type AnalysisResult } from "../../../lib/rehab/analysis";
+import { buildRacingAnalysis } from "../../../lib/racing/analysis";
+import { LEVELS, RehabRecorder, ROAD_HALF_WIDTH, loadProfile, loadSessions, recommend, saveLevel, saveSession, type RehabProfile, type SessionSummary } from "../../../lib/racing/rehab";
 import { SerialSensor, sensorLog } from "../../../lib/racing/sensor";
 
 const COIN_SPACING = 520;
+const COURSE_LENGTH = 15000;
+/** Camera steering: hand centre starts mid-frame; moving this share of the frame width reaches full lane. */
+const HAND_HALF_RANGE = 0.22;
+
+type InputMode = "hand" | "imu";
 
 type RaceSnapshot = {
   speed: number;
@@ -34,6 +44,19 @@ export default function RacingGame() {
     () => sensor.status,
     () => "disconnected" as const
   );
+  const [tracker] = useState(() => new HandTracker());
+  const cameraStatus = useSyncExternalStore(
+    (notify) => tracker.subscribe(notify),
+    () => tracker.status,
+    () => "off" as const
+  );
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
+  const handCenterRef = useRef(0.5);
+  const [inputMode, setInputMode] = useState<InputMode>("hand");
+  const inputModeRef = useRef<InputMode>("hand");
+  const [report, setReport] = useState<TrajectoryReport | null>(null);
+  const [analysis, setAnalysis] = useState<AnalysisResult | "loading" | null>(null);
   const profileRef = useRef<RehabProfile>(LEVELS[0]);
   const [profile, setProfile] = useState<RehabProfile>(LEVELS[0]);
   const [summary, setSummary] = useState<SessionSummary | null>(null);
@@ -49,8 +72,13 @@ export default function RacingGame() {
     const saved = loadProfile();
     profileRef.current = saved;
     setProfile(saved);
-    return () => { void sensor.disconnect(); };
-  }, [sensor]);
+    tracker.attach(videoRef.current, overlayRef.current);
+    return () => { void sensor.disconnect(); tracker.stop(); };
+  }, [sensor, tracker]);
+
+  useEffect(() => {
+    inputModeRef.current = inputMode;
+  }, [inputMode]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -69,6 +97,7 @@ export default function RacingGame() {
     let pickupFlash = 0;
     let finished = false;
     let recorder: RehabRecorder | null = null;
+    let trajectory: TrajectoryRecorder | null = null;
     let wasLive = false;
     let previousReset = resetRef.current;
     const collectedCoins = new Set<number>();
@@ -131,16 +160,18 @@ export default function RacingGame() {
         lap = 1;
         finished = false;
         recorder = null;
+        trajectory = null;
         collectedCoins.clear();
         previousReset = resetRef.current;
       }
 
       const rehab = profileRef.current;
-      const sensorLive = sensor.isLive(now);
+      const handMode = inputModeRef.current === "hand";
+      const sensorLive = handMode ? tracker.isLive(now) : sensor.isLive(now);
       if (!sensorLive && wasLive && runningRef.current) {
         // Safe loss-of-signal: stop the car rather than let it drift with a stale reading.
         recorder?.signalDropped();
-        sensorLog("SIGNAL LOST: no fresh frame for 700ms, race paused");
+        sensorLog(handMode ? "HAND LOST: no hand in view for 500ms, race paused" : "SIGNAL LOST: no fresh frame for 700ms, race paused");
         runningRef.current = false;
         setRunning(false);
         setSignalLost(true);
@@ -152,26 +183,40 @@ export default function RacingGame() {
         const targetSpeed = offRoad ? 118 : 245;
         speed += (targetSpeed - speed) * Math.min(1, dt * (offRoad ? 4.5 : 2.2));
         recorder ??= new RehabRecorder(rehab);
+        trajectory ??= new TrajectoryRecorder(rehab.laneSpread, COIN_SPACING);
         const frame = sensor.latest;
+        const hand = tracker.latest && tracker.isLive(now) ? tracker.latest : null;
         // IMU steer is +1 = left, -1 = right; the game's x axis is +right.
         // The wrist angle maps straight to lateral position, so reaching a lane needs that share of the calibrated range.
+        // Hand mode maps palm position across the camera frame the same way.
         // Without a fresh reading the car holds its line instead of following stale data.
-        if (frame && sensorLive) x += (-frame.steer - x) * Math.min(1, dt * 8);
+        let steerTarget: number | null = null;
+        if (handMode) { if (hand) steerTarget = (hand.x - handCenterRef.current) / HAND_HALF_RANGE; }
+        else if (frame && sensorLive) steerTarget = -frame.steer;
+        if (steerTarget !== null) x += (Math.max(-1.35, Math.min(1.35, steerTarget)) - x) * Math.min(1, dt * 8);
         x = Math.max(-1.35, Math.min(1.35, x));
-        recorder.update(dt, x, frame ? -frame.steer : 0, frame ? frame.roll : 0);
+        recorder.update(dt, x, handMode ? x : frame ? -frame.steer : 0, !handMode && frame ? frame.roll : 0);
+        trajectory.update(dt, distance, x, hand);
         distance += speed * dt;
         elapsed += dt;
         pickupFlash = Math.max(0, pickupFlash - dt);
         if (distance >= 5000 * lap) lap = Math.min(3, lap + 1);
-        if (distance >= 15000) {
-          distance = 15000;
+        if (distance >= COURSE_LENGTH) {
+          distance = COURSE_LENGTH;
           speed = 0;
           finished = true;
           runningRef.current = false;
           setRunning(false);
           const result = (recorder ?? new RehabRecorder(rehab)).summarize(coins, distance, COIN_SPACING);
+          const path = trajectory?.report(COURSE_LENGTH, collectedCoins) ?? null;
+          if (path && path.handCoverage > 0) result.pathScore = path.score;
+          const history = loadSessions();
           saveSession(result);
           setSummary(result);
+          setReport(path);
+          // Fire immediately so the coaching note is usually ready by the time the results are read.
+          setAnalysis("loading");
+          void requestAnalysis(buildRacingAnalysis(result, rehab, path, history)).then(setAnalysis);
         }
       }
 
@@ -263,7 +308,7 @@ export default function RacingGame() {
         if (coinDistance <= 0 || coinDistance > 2600 || collectedCoins.has(coinId)) continue;
         const phase = 1 - coinDistance / 2600;
         const depth = phase * phase;
-        const lane = Math.sin(coinId * 2.2) * rehab.laneSpread;
+        const lane = coinLane(coinId, rehab.laneSpread);
         const center = width / 2 + curve * (1 - phase);
         const spread = roadTop / 2 + (roadBottom / 2 - roadTop / 2) * depth;
         drawCoin(center + lane * spread, horizon + depth * (height - horizon) - 25, .45 + depth * 1.2);
@@ -363,18 +408,26 @@ export default function RacingGame() {
       cancelAnimationFrame(animation);
       window.removeEventListener("keydown", press);
     };
-  }, [sensor]);
+  }, [sensor, tracker]);
 
   const reset = () => {
     resetRef.current += 1;
     setSummary(null);
+    setReport(null);
+    setAnalysis(null);
     setSignalLost(false);
     setSnapshot({ speed: 0, coins: 0, lap: 1, progress: 0, time: "00:00.000", finished: false });
     setRunning(false);
   };
 
   const startRace = () => {
-    sensorLog(`START pressed: status=${sensorStatus} live=${sensor.isLive(performance.now())}`);
+    sensorLog(`START pressed: mode=${inputMode} status=${sensorStatus} camera=${cameraStatus} live=${sensor.isLive(performance.now())}`);
+    if (inputMode === "hand") {
+      if (cameraStatus !== "live") { void tracker.start(); return; }
+      setSignalLost(false);
+      setRunning(true);
+      return;
+    }
     if (sensorStatus !== "connected") {
       void sensor.connect();
       return;
@@ -392,6 +445,10 @@ export default function RacingGame() {
 
   const next = summary ? recommend(summary, profile) : null;
   const sensorConnected = sensorStatus === "connected";
+  const handMode = inputMode === "hand";
+  const inputReady = handMode ? cameraStatus === "live" : sensorConnected;
+  const centerHand = () => { if (tracker.latest) handCenterRef.current = tracker.latest.x; };
+  const pickMode = (mode: InputMode) => { setInputMode(mode); setSignalLost(false); };
 
   return (
     <main className="race-page">
@@ -399,13 +456,13 @@ export default function RacingGame() {
       <header className="race-header">
         <Link href="/dashboard"><ArrowLeft size={16} /> QUEST HUB</Link>
         <div><span>PULSE CIRCUIT</span><b>WORLD 02</b></div>
-        <div className="race-header-actions">{sensorStatus !== "unsupported" && <button onClick={() => (sensorConnected ? sensor.disconnect() : sensor.connect())} aria-label={sensorConnected ? "Disconnect sensor" : "Connect sensor"}><Bluetooth size={15} /><span>{sensorConnected ? "SENSOR ON" : sensorStatus === "connecting" ? "CONNECTING" : "CONNECT"}</span></button>}<button onClick={snapshot.finished ? reset : () => (running ? setRunning(false) : startRace())}>{snapshot.finished ? <RotateCcw size={15} /> : running ? <Pause size={15} /> : <Play size={15} />}<span>{snapshot.finished ? "REPLAY" : running ? "PAUSE" : "START"}</span></button><button onClick={reset} aria-label="Reset race"><RotateCcw size={15} /></button><button aria-label="Sound"><Volume2 size={15} /></button></div>
+        <div className="race-header-actions"><button onClick={() => pickMode(handMode ? "imu" : "hand")} aria-label="Switch steering input"><Camera size={15} /><span>{handMode ? "HAND CAM" : "IMU"}</span></button>{!handMode && sensorStatus !== "unsupported" && <button onClick={() => (sensorConnected ? sensor.disconnect() : sensor.connect())} aria-label={sensorConnected ? "Disconnect sensor" : "Connect sensor"}><Bluetooth size={15} /><span>{sensorConnected ? "SENSOR ON" : sensorStatus === "connecting" ? "CONNECTING" : "CONNECT"}</span></button>}<button onClick={snapshot.finished ? reset : () => (running ? setRunning(false) : startRace())}>{snapshot.finished ? <RotateCcw size={15} /> : running ? <Pause size={15} /> : <Play size={15} />}<span>{snapshot.finished ? "REPLAY" : running ? "PAUSE" : "START"}</span></button><button onClick={reset} aria-label="Reset race"><RotateCcw size={15} /></button><button aria-label="Sound"><Volume2 size={15} /></button></div>
       </header>
 
       <section className="race-shell">
         <div className="race-command-frame" aria-hidden="true"><i /><i /><i /><i /></div>
         <div className="race-side-readout input-readout">
-          <span>INPUT VECTOR</span><b>{running ? "LIVE" : "STANDBY"}</b><small>IMU // STEER</small>
+          <span>INPUT VECTOR</span><b>{running ? "LIVE" : "STANDBY"}</b><small>{handMode ? "CAMERA // HAND" : "IMU // STEER"}</small>
         </div>
         <div className="race-side-readout sync-readout">
           <span>COURSE SYNC</span><b>{Math.max(1, Math.round(snapshot.progress)).toString().padStart(2, "0")}%</b><small>LINE // 02</small>
@@ -416,7 +473,24 @@ export default function RacingGame() {
         <canvas ref={canvasRef} width={1280} height={720} aria-label="Playable Pulse Circuit kart racing game" />
         <div className="speed-hud"><Gauge size={18} /><strong>{snapshot.speed}</strong><span>KM/H</span></div>
         <div className="race-progress"><span style={{ width: `${snapshot.progress}%` }} /></div>
-        {sensorConnected && !snapshot.finished && (
+        <div className={`hand-panel${handMode && !snapshot.finished ? "" : " hidden"}`}>
+          <div className="hand-view">
+            <video ref={videoRef} playsInline muted />
+            <canvas ref={overlayRef} width={320} height={240} />
+            {cameraStatus === "off" && <em>CAMERA OFF</em>}
+            {cameraStatus === "starting" && <em>LOADING…</em>}
+          </div>
+          <div className="hand-controls">
+            <button onClick={centerHand} disabled={cameraStatus !== "live"}>SET CENTER</button>
+            {cameraStatus === "live" && tracker.devices.length > 1 && (
+              <select value={tracker.deviceId} onChange={(event) => { void tracker.start(event.target.value); }} aria-label="Camera">
+                {tracker.devices.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Camera ${index + 1}`}</option>)}
+              </select>
+            )}
+          </div>
+          <small>{tracker.error || "Hold your hand up to the camera. Move it left and right to steer."}</small>
+        </div>
+        {!handMode && sensorConnected && !snapshot.finished && (
           <div className="sensor-panel">
             <span>LEVEL {profile.level} · {profile.label.toUpperCase()}</span>
             <div className="sensor-steps">
@@ -427,7 +501,7 @@ export default function RacingGame() {
             <small>Rotate your forearm to steer. Limits are saved to your comfortable range.</small>
           </div>
         )}
-        {!running && !snapshot.finished && <button className="race-start" onClick={startRace}><Play size={21} fill="currentColor" /><span>{signalLost ? "SENSOR LOST" : !sensorConnected ? "CONNECT SENSOR" : snapshot.time === "00:00.000" ? "START RACE" : "RESUME"}</span><small>{signalLost ? "RECONNECT OR CHECK THE DEVICE, THEN RESUME" : sensorConnected ? "ROTATE YOUR FOREARM TO STEER" : sensorStatus === "unsupported" ? "SENSOR NEEDS CHROME OR EDGE" : "CLICK TO CONNECT YOUR SENSOR"}</small></button>}
+        {!running && !snapshot.finished && <button className="race-start" onClick={startRace}><Play size={21} fill="currentColor" /><span>{signalLost ? (handMode ? "HAND LOST" : "SENSOR LOST") : !inputReady ? (handMode ? "START CAMERA" : "CONNECT SENSOR") : snapshot.time === "00:00.000" ? "START RACE" : "RESUME"}</span><small>{signalLost ? (handMode ? "BRING YOUR HAND BACK INTO VIEW, THEN RESUME" : "RECONNECT OR CHECK THE DEVICE, THEN RESUME") : handMode ? (inputReady ? "MOVE YOUR HAND LEFT AND RIGHT TO STEER" : "CLICK TO ALLOW YOUR CAMERA") : sensorConnected ? "ROTATE YOUR FOREARM TO STEER" : sensorStatus === "unsupported" ? "SENSOR NEEDS CHROME OR EDGE" : "CLICK TO CONNECT YOUR SENSOR"}</small></button>}
         {snapshot.finished && (
           <div className="finish-screen" role="dialog" aria-label="Race complete">
             <div className="finish-burst" aria-hidden="true">{Array.from({ length: 12 }, (_, index) => <i key={index} />)}</div>
@@ -443,12 +517,36 @@ export default function RacingGame() {
             {summary && next && (
               <div className="finish-rehab">
                 <div>
-                  <span>REACH <b>R {summary.peakRightDeg}° · L {summary.peakLeftDeg}°</b></span>
+                  {summary.pathScore !== undefined ? <span>PATH MATCH <b>{summary.pathScore}</b></span> : <span>REACH <b>R {summary.peakRightDeg}° · L {summary.peakLeftDeg}°</b></span>}
                   <span>SWEEPS <b>{summary.sweeps}</b></span>
                   <span>COINS <b>{summary.coins}/{summary.coinsOffered}</b></span>
                   <span>SMOOTH <b>{summary.smoothness}</b></span>
                   <span>ON ROAD <b>{Math.round(summary.onRoad * 100)}%</b></span>
                 </div>
+                {report && report.handCoverage > 0 && (
+                  <>
+                    <TrajectoryChart report={report} />
+                    <div className="trajectory-stats">
+                      <span>AVG OFF OPTIMAL <b>{Math.round(report.meanError * 100)}%</b></span>
+                      <span>WIDEST MISS <b>{Math.round(report.maxError * 100)}%</b></span>
+                      <span>PATH LENGTH <b>{report.pathRatio.toFixed(1)}×</b></span>
+                      <span>HAND WOBBLE <b>{Math.round(report.verticalDrift * 100)}%</b></span>
+                    </div>
+                  </>
+                )}
+                {analysis && (
+                  <div className="coach-note" aria-live="polite">
+                    <span>COACH NOTE</span>
+                    {analysis === "loading" ? <p>Reading your run…</p> : (
+                      <>
+                        <strong>{analysis.headline}</strong>
+                        <ul>{analysis.observations.map((line) => <li key={line}>{line}</li>)}</ul>
+                        <p>{analysis.progress}</p>
+                        <p>TRY NEXT: {analysis.nextStep}</p>
+                      </>
+                    )}
+                  </div>
+                )}
                 <p>NEXT STEP: {next.reason}</p>
                 {next.action !== "repeat" && <button onClick={() => changeLevel(profile.level + (next.action === "advance" ? 1 : -1))}>{next.action === "advance" ? `TRY LEVEL ${profile.level + 1}` : `DROP TO LEVEL ${profile.level - 1}`}</button>}
               </div>
@@ -462,7 +560,7 @@ export default function RacingGame() {
         )}
       </section>
 
-      <footer className="race-footer"><span>FOREARM ROTATION STEERS</span><span><i className="key wide">SPACE</i> PAUSE</span><b className={sensorConnected ? "" : "idle"}><i /> {sensorConnected ? "SENSOR LIVE" : sensorStatus === "unsupported" ? "USE CHROME OR EDGE" : "SENSOR NOT CONNECTED"}</b></footer>
+      <footer className="race-footer"><span>{handMode ? "HAND POSITION STEERS" : "FOREARM ROTATION STEERS"}</span><span><i className="key wide">SPACE</i> PAUSE</span><b className={inputReady ? "" : "idle"}><i /> {handMode ? (inputReady ? "CAMERA LIVE" : cameraStatus === "unsupported" ? "NO CAMERA SUPPORT" : "CAMERA OFF") : sensorConnected ? "SENSOR LIVE" : sensorStatus === "unsupported" ? "USE CHROME OR EDGE" : "SENSOR NOT CONNECTED"}</b></footer>
     </main>
   );
 }
