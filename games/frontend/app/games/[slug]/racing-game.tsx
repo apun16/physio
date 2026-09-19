@@ -4,7 +4,7 @@ import { ArrowLeft, Bluetooth, Gauge, Pause, Play, RotateCcw, Volume2 } from "lu
 import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { LEVELS, RehabRecorder, ROAD_HALF_WIDTH, loadProfile, recommend, saveLevel, saveSession, type RehabProfile, type SessionSummary } from "../../../lib/racing/rehab";
-import { SerialSensor } from "../../../lib/racing/sensor";
+import { SerialSensor, sensorLog } from "../../../lib/racing/sensor";
 
 const COIN_SPACING = 520;
 
@@ -140,6 +140,7 @@ export default function RacingGame() {
       if (!sensorLive && wasLive && runningRef.current) {
         // Safe loss-of-signal: stop the car rather than let it drift with a stale reading.
         recorder?.signalDropped();
+        sensorLog("SIGNAL LOST: no fresh frame for 700ms, race paused");
         runningRef.current = false;
         setRunning(false);
         setSignalLost(true);
@@ -373,6 +374,7 @@ export default function RacingGame() {
   };
 
   const startRace = () => {
+    sensorLog(`START pressed: status=${sensorStatus} live=${sensor.isLive(performance.now())}`);
     if (sensorStatus !== "connected") {
       void sensor.connect();
       return;

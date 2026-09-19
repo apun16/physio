@@ -28,6 +28,13 @@ const COMMAND_CHAR: Record<SensorCommand, string> = { center: "c", rollRight: "r
 /** No frame for this long while connected = signal lost. */
 export const STALE_AFTER_MS = 700;
 
+/** Debug output: browser console plus the `npm run dev` terminal (via /api/sensor-log). */
+export function sensorLog(message: string) {
+  console.log(`[sensor] ${message}`);
+  if (typeof fetch === "undefined") return;
+  fetch("/api/sensor-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message }), keepalive: true }).catch(() => undefined);
+}
+
 export function parseFrame(line: string, t: number): SensorFrame | null {
   const text = line.trim();
   if (!text || text.startsWith("#")) return null;
@@ -74,9 +81,12 @@ export class SerialSensor {
     if (!serial || this.status === "connecting" || this.status === "connected") return;
     this.error = "";
     try {
+      sensorLog("opening port picker...");
       const port = await serial.requestPort();
       this.setStatus("connecting");
+      sensorLog("port chosen, opening at 115200 baud...");
       await port.open({ baudRate: 115200 });
+      sensorLog("port OPEN. Waiting for data (nothing below = port opened but ESP32 sent no bytes)");
       this.port = port;
       this.latest = null;
       this.setStatus("connected");
@@ -85,6 +95,7 @@ export class SerialSensor {
       // Picker dismissed or port busy.
       this.port = null;
       this.error = reason instanceof Error && reason.name !== "NotFoundError" ? reason.message : "";
+      sensorLog(`connect failed: ${reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason)}`);
       this.setStatus("disconnected");
     }
   }
@@ -107,6 +118,14 @@ export class SerialSensor {
   private async readLoop(port: SerialPortLike) {
     const decoder = new TextDecoder();
     let buffer = "";
+    let bytes = 0;
+    let frames = 0;
+    let rejected = 0;
+    const report = () => {
+      const f = this.latest;
+      sensorLog(`bytes=${bytes} frames=${frames} rejected=${rejected} latest=${f ? `roll=${f.roll} steer=${f.steer} move=${f.move}` : "none"}`);
+    };
+    const reportTimer = setInterval(report, 1000);
     try {
       while (port.readable) {
         this.reader = port.readable.getReader();
@@ -114,11 +133,22 @@ export class SerialSensor {
           for (;;) {
             const { value, done } = await this.reader.read();
             if (done) break;
+            bytes += value.length;
             buffer += decoder.decode(value, { stream: true });
             let newline = buffer.indexOf("\n");
             while (newline >= 0) {
-              const frame = parseFrame(buffer.slice(0, newline), performance.now());
-              if (frame) this.latest = frame;
+              const rawLine = buffer.slice(0, newline);
+              const frame = parseFrame(rawLine, performance.now());
+              if (frame) {
+                this.latest = frame;
+                frames += 1;
+                if (frames <= 3) sensorLog(`first frames: ${JSON.stringify(rawLine.trim())} -> steer=${frame.steer}`);
+              } else if (rawLine.trim().startsWith("#")) {
+                sensorLog(`firmware says: ${rawLine.trim()}`);
+              } else if (rawLine.trim()) {
+                rejected += 1;
+                if (rejected <= 5) sensorLog(`rejected line: ${JSON.stringify(rawLine.trim())} (expected 5 comma-separated numbers)`);
+              }
               buffer = buffer.slice(newline + 1);
               newline = buffer.indexOf("\n");
             }
@@ -132,7 +162,11 @@ export class SerialSensor {
       }
     } catch (reason) {
       this.error = reason instanceof Error ? reason.message : "Sensor read failed";
+      sensorLog(`read error: ${this.error}`);
     } finally {
+      clearInterval(reportTimer);
+      report();
+      sensorLog("port closed");
       await port.close().catch(() => undefined);
       this.port = null;
       this.latest = null;
