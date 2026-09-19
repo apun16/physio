@@ -24,12 +24,12 @@ const levels = [
     slug: "move",
     number: "01",
     title: "Move",
-    subtitle: "Target Navigation",
-    description: "Guide your character through targets with smooth, controlled upper-body movement.",
+    subtitle: "Skyward Journey",
+    description: "Walk the woods automatically and use sword, shield, and bow when enemies step in.",
     icon: Move,
     accent: "move",
-    status: "calibrate" as LevelStatus,
-    cta: "Calibrate & Start",
+    status: "ready" as LevelStatus,
+    cta: "Play Now",
     tags: ["Range", "Trajectory"]
   },
   {
