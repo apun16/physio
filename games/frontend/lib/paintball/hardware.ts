@@ -5,55 +5,81 @@
  *   steer   -> move left and right
  *   roll    -> move forward and back
  *
- * Aiming stays on the mouse: the controller supplies the rehab movement, the
- * cursor supplies the look, exactly as it does in the other worlds.
+ * Aiming stays on the mouse.
+ *
+ * Everything here is measured RELATIVE to what the device is actually sending,
+ * not to absolute thresholds. An uncalibrated FSR can rest at 0.6 and an
+ * uncalibrated IMU can rest at 20 degrees of roll, which with fixed thresholds
+ * means the trigger never re-arms and the player drifts forward forever. The
+ * controller learns its own resting point instead.
  */
 
 import type { SerialSensor } from "../racing/sensor";
 
 export const PAINTBALL_TUNING = {
-  /** steer arrives normalised -1..1. Ignore anything inside this. */
-  steerDeadzone: 0.12,
-  /** Travel from the deadzone edge to this value is the full movement range. */
-  steerFull: 0.75,
-  /** roll arrives in degrees from neutral. Ignore anything inside this. */
-  rollDeadzone: 8,
-  /** Degrees of roll that count as a full forward or back push. */
-  rollFull: 35,
-  /** Squeeze above this pulls the trigger. */
-  fireAt: 0.35,
-  /** Squeeze has to fall back under this before the next shot. */
-  fireRearm: 0.2,
-  /** Flip if leaning right moves you left, or roll runs backwards. */
+  /** Deadzone around the learned resting point, in steer units. */
+  steerDeadzone: 0.1,
+  /** Travel past the deadzone that counts as full left or right. */
+  steerFull: 0.6,
+  /** Deadzone around the learned resting roll, in degrees. */
+  rollDeadzone: 6,
+  /** Degrees past the deadzone that count as a full push. */
+  rollFull: 28,
+  /** Share of the observed squeeze range that pulls the trigger. */
+  fireAt: 0.55,
+  /** Falling back to this share of the range re-arms it. */
+  fireRearm: 0.3,
+  /** The squeeze range has to be at least this wide to be believable. */
+  minSqueezeSpan: 0.06,
+  /** Flip if a direction runs backwards. */
   steerSign: 1,
-  rollSign: 1,
-  /** Seconds between debug lines in the dev terminal. 0 disables. */
-  logEvery: 0
+  rollSign: 1
 };
 
-/** Map a signed reading onto -1..1 with a deadzone and a saturation point. */
 function axis(value: number, deadzone: number, full: number) {
   const magnitude = Math.abs(value);
   if (magnitude <= deadzone) return 0;
-  const span = Math.max(0.0001, full - deadzone);
-  return Math.sign(value) * Math.min(1, (magnitude - deadzone) / span);
+  return Math.sign(value) * Math.min(1, (magnitude - deadzone) / Math.max(0.0001, full));
 }
 
 export type HardwareMove = {
-  /** -1..1, positive is forward */
   forward: number;
-  /** -1..1, positive is right */
   strafe: number;
-  /** True on the frame the trigger is pulled */
   fired: boolean;
   live: boolean;
+};
+
+/** Everything the on-screen readout needs to explain what the device is doing. */
+export type HardwareDebug = {
+  live: boolean;
+  rawSteer: number;
+  rawRoll: number;
+  rawSqueeze: number;
+  restRoll: number;
+  restSteer: number;
+  squeezeLow: number;
+  squeezeHigh: number;
+  squeezeNorm: number;
+  forward: number;
+  strafe: number;
+  armed: boolean;
+  shots: number;
 };
 
 const IDLE: HardwareMove = { forward: 0, strafe: 0, fired: false, live: false };
 
 export class PaintballHardware {
+  private restRoll: number | null = null;
+  private restSteer: number | null = null;
+  private squeezeLow = Number.POSITIVE_INFINITY;
+  private squeezeHigh = Number.NEGATIVE_INFINITY;
   private armed = true;
-  private logT = 0;
+  private shots = 0;
+
+  debug: HardwareDebug = {
+    live: false, rawSteer: 0, rawRoll: 0, rawSqueeze: 0, restRoll: 0, restSteer: 0,
+    squeezeLow: 0, squeezeHigh: 0, squeezeNorm: 0, forward: 0, strafe: 0, armed: true, shots: 0
+  };
 
   constructor(private sensor: SerialSensor) {}
 
@@ -61,39 +87,66 @@ export class PaintballHardware {
     return this.sensor.isLive(performance.now());
   }
 
-  poll(dt: number): HardwareMove {
-    const now = performance.now();
+  /** Take the current pose as the new neutral. Called when a match starts. */
+  recentre() {
+    this.restRoll = null;
+    this.restSteer = null;
+    this.squeezeLow = Number.POSITIVE_INFINITY;
+    this.squeezeHigh = Number.NEGATIVE_INFINITY;
+    this.armed = true;
+  }
+
+  poll(_dt: number): HardwareMove {
     const frame = this.sensor.latest;
-    if (!this.sensor.isLive(now) || !frame) {
-      this.armed = true;
+    if (!this.sensor.isLive(performance.now()) || !frame) {
+      this.debug = { ...this.debug, live: false, forward: 0, strafe: 0 };
       return IDLE;
     }
 
-    const strafe = axis(frame.steer * PAINTBALL_TUNING.steerSign, PAINTBALL_TUNING.steerDeadzone, PAINTBALL_TUNING.steerFull);
-    const forward = axis(frame.roll * PAINTBALL_TUNING.rollSign, PAINTBALL_TUNING.rollDeadzone, PAINTBALL_TUNING.rollFull);
+    // First live frame defines neutral for the motion axes.
+    if (this.restRoll === null) this.restRoll = frame.roll;
+    if (this.restSteer === null) this.restSteer = frame.steer;
 
-    // Squeeze is a trigger, not a level: one shot per squeeze, re-armed when
-    // the grip relaxes. The game's own fire cooldown still applies on top.
-    const squeeze = frame.squeeze ?? 0;
+    const rollDelta = (frame.roll - this.restRoll) * PAINTBALL_TUNING.rollSign;
+    const steerDelta = (frame.steer - this.restSteer) * PAINTBALL_TUNING.steerSign;
+    const forward = axis(rollDelta, PAINTBALL_TUNING.rollDeadzone, PAINTBALL_TUNING.rollFull);
+    const strafe = axis(steerDelta, PAINTBALL_TUNING.steerDeadzone, PAINTBALL_TUNING.steerFull);
+
+    // The trigger learns the grip range as it is used, so it works whether the
+    // FSR rests near 0 or near 1 and whatever the patient's maximum is.
+    const raw = frame.squeeze ?? 0;
+    this.squeezeLow = Math.min(this.squeezeLow, raw);
+    this.squeezeHigh = Math.max(this.squeezeHigh, raw);
+    const span = this.squeezeHigh - this.squeezeLow;
+    const usable = span >= PAINTBALL_TUNING.minSqueezeSpan;
+    const norm = usable ? (raw - this.squeezeLow) / span : 0;
+
     let fired = false;
-    if (this.armed && squeeze >= PAINTBALL_TUNING.fireAt) {
-      fired = true;
-      this.armed = false;
-    } else if (!this.armed && squeeze <= PAINTBALL_TUNING.fireRearm) {
-      this.armed = true;
-    }
-
-    if (PAINTBALL_TUNING.logEvery > 0) {
-      this.logT += dt;
-      if (this.logT >= PAINTBALL_TUNING.logEvery) {
-        this.logT = 0;
-        console.log(
-          `[paintball] steer=${frame.steer.toFixed(2)} -> strafe=${strafe.toFixed(2)} | ` +
-            `roll=${frame.roll.toFixed(1)} -> forward=${forward.toFixed(2)} | ` +
-            `squeeze=${squeeze.toFixed(2)} armed=${this.armed}${fired ? " FIRE" : ""}`
-        );
+    if (usable) {
+      if (this.armed && norm >= PAINTBALL_TUNING.fireAt) {
+        fired = true;
+        this.armed = false;
+        this.shots += 1;
+      } else if (!this.armed && norm <= PAINTBALL_TUNING.fireRearm) {
+        this.armed = true;
       }
     }
+
+    this.debug = {
+      live: true,
+      rawSteer: frame.steer,
+      rawRoll: frame.roll,
+      rawSqueeze: raw,
+      restRoll: this.restRoll,
+      restSteer: this.restSteer,
+      squeezeLow: Number.isFinite(this.squeezeLow) ? this.squeezeLow : 0,
+      squeezeHigh: Number.isFinite(this.squeezeHigh) ? this.squeezeHigh : 0,
+      squeezeNorm: norm,
+      forward,
+      strafe,
+      armed: this.armed,
+      shots: this.shots
+    };
 
     return { forward, strafe, fired, live: true };
   }

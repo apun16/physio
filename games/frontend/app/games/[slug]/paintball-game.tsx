@@ -4,7 +4,7 @@ import { ArrowLeft, Bluetooth, Crosshair } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { PaintballGame } from "@/lib/paintball/game";
-import { PaintballHardware } from "@/lib/paintball/hardware";
+import { PaintballHardware, type HardwareDebug } from "@/lib/paintball/hardware";
 import { SerialSensor } from "@/lib/racing/sensor";
 import type { HudSnapshot } from "@/lib/paintball/types";
 import "./paintball.css";
@@ -46,6 +46,8 @@ export default function PaintballGameView() {
     () => "disconnected" as const
   );
   const [hud, setHud] = useState<HudSnapshot>(emptyHud);
+  const hardwareRef = useRef<PaintballHardware | null>(null);
+  const [pad, setPad] = useState<HardwareDebug | null>(null);
   const [screen, setScreen] = useState<"start" | "play">("start");
 
   useEffect(() => {
@@ -56,6 +58,7 @@ export default function PaintballGameView() {
     // squeeze shoots, steer moves left and right, roll moves forward and back.
     // The keyboard keeps working alongside it.
     const hardware = new PaintballHardware(sensor);
+    hardwareRef.current = hardware;
     game.input.hardware = (dt) => hardware.poll(dt);
     gameRef.current = game;
     let last = performance.now();
@@ -76,6 +79,7 @@ export default function PaintballGameView() {
       if (hudWait >= 0.08 || snap.phase === "countdown" || snap.toast || snap.phase === "over" || snap.phase === "pause") {
         hudWait = 0;
         setHud(snap);
+        setPad({ ...hardware.debug });
       }
       raf = requestAnimationFrame(tick);
     };
@@ -101,6 +105,7 @@ export default function PaintballGameView() {
   const sensorConnected = sensorStatus === "connected";
 
   const begin = () => {
+    hardwareRef.current?.recentre();
     setScreen("play");
     gameRef.current?.setMode("kbm");
     gameRef.current?.startPlay();
@@ -124,6 +129,24 @@ export default function PaintballGameView() {
       <section className="paint-stage">
         <canvas ref={canvasRef} className="paint-canvas" />
         <div className="paint-cross" aria-hidden="true"><i /><i /><b /></div>
+        {sensorConnected && (
+          <div className="paint-pad" aria-live="off">
+            <span>CONTROLLER {pad?.live ? "LIVE" : "NO DATA"}</span>
+            {pad?.live ? (
+              <>
+                <i><b>roll</b> {pad.rawRoll.toFixed(1)}&deg; rest {pad.restRoll.toFixed(1)}&deg;</i>
+                <i><b>fwd</b> <u style={{ width: `${Math.abs(pad.forward) * 100}%` }} data-neg={pad.forward < 0} />{pad.forward.toFixed(2)}</i>
+                <i><b>steer</b> {pad.rawSteer.toFixed(2)} rest {pad.restSteer.toFixed(2)}</i>
+                <i><b>l/r</b> <u style={{ width: `${Math.abs(pad.strafe) * 100}%` }} data-neg={pad.strafe < 0} />{pad.strafe.toFixed(2)}</i>
+                <i><b>grip</b> {pad.rawSqueeze.toFixed(2)} range {pad.squeezeLow.toFixed(2)}-{pad.squeezeHigh.toFixed(2)}</i>
+                <i><b>trig</b> <u style={{ width: `${Math.min(1, Math.max(0, pad.squeezeNorm)) * 100}%` }} />{(pad.squeezeNorm * 100).toFixed(0)}% {pad.armed ? "READY" : "HELD"}</i>
+                <i><b>shots</b> {pad.shots}</i>
+              </>
+            ) : (
+              <i>Waiting for frames. Check the device is powered and paired.</i>
+            )}
+          </div>
+        )}
         {hud.phase === "play" && (
           <div className="paint-hud">
             <div className="paint-hearts">{Array.from({ length: hud.maxHealth }, (_, index) => <span key={index} data-on={index < hud.health} />)}</div>
