@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { loadSkywardAssets, type SkywardAssets } from "@/lib/skyward/assets";
 import { DebugInputProvider, IMUInputProvider } from "@/lib/skyward/input";
 import { SerialSensor } from "@/lib/racing/sensor";
+import RehabGuardianHost from "../../../components/sentry-sidekick/RehabGuardianHost";
 import { drawSkyward, HEIGHT, WIDTH } from "@/lib/skyward/render";
 import { ENCOUNTERS } from "@/lib/skyward/encounters";
 import { JourneyState } from "@/lib/skyward/state";
@@ -23,6 +24,7 @@ export default function SkywardGame() {
     () => sensor.status,
     () => "disconnected" as const
   );
+  const pausedRef = useRef(false);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState("");
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -75,8 +77,10 @@ export default function SkywardGame() {
         setSummary(null);
       }
       if (assets) {
-        state.apply([...input.poll(), ...imu.poll()]);
-        state.update(dt);
+        if (!pausedRef.current) {
+          state.apply([...input.poll(), ...imu.poll()]);
+          state.update(dt);
+        }
         drawSkyward(context, state, assets, true);
         const over = state.phase === "complete" || state.phase === "dead";
         if (over && !summaryShown && state.endT > 0.35) {
@@ -119,7 +123,7 @@ export default function SkywardGame() {
               <Bluetooth size={15} /><span>{sensorConnected ? "CONTROLLER ON" : sensorStatus === "connecting" ? "CONNECTING" : "CONNECT"}</span>
             </button>
           )}
-          <button onClick={() => { resetRef.current += 1; }} aria-label="Reset journey">
+          <button onClick={() => { pausedRef.current = false; resetRef.current += 1; }} aria-label="Reset journey">
             <RotateCcw size={15} /><span>RESET</span>
           </button>
         </div>
@@ -137,7 +141,7 @@ export default function SkywardGame() {
               <div><dt>Arrows left</dt><dd>{summary.arrows}</dd></div>
             </dl>
             <div className="skyward-summary-actions">
-              <button onClick={() => { resetRef.current += 1; }}><RotateCcw size={15} /> REPLAY</button>
+              <button onClick={() => { pausedRef.current = false; resetRef.current += 1; }}><RotateCcw size={15} /> REPLAY</button>
               <Link href="/dashboard">QUEST HUB</Link>
             </div>
           </div>
@@ -162,6 +166,20 @@ export default function SkywardGame() {
         <span>SWEEP SIDEWAYS — SLASH</span>
         <b className={sensorConnected ? "" : "idle"}><i /> {sensorConnected ? "CONTROLLER LIVE" : sensorStatus === "unsupported" ? "USE CHROME OR EDGE" : "CONTROLLER NOT CONNECTED — J/K/L, E"}</b>
       </footer>
+      <RehabGuardianHost
+        sensor={sensor}
+        game="skyward"
+        inputMode="imu"
+        running={ready && !summary}
+        gameEnded={Boolean(summary)}
+        fallbackAvailable={false}
+        onPause={() => { pausedRef.current = true; }}
+        onResume={() => { pausedRef.current = false; }}
+        onReconnect={() => { void sensor.connect(); }}
+        onCalibrate={(command) => { void sensor.send(command); }}
+        onFallback={() => false}
+        onExit={() => { void sensor.disconnect(); window.location.assign("/dashboard"); }}
+      />
     </main>
   );
 }

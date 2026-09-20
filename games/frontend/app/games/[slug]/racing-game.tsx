@@ -10,6 +10,7 @@ import { requestAnalysis, type AnalysisResult } from "../../../lib/rehab/analysi
 import { buildRacingAnalysis, proposeTuning } from "../../../lib/racing/analysis";
 import { LEVELS, RehabRecorder, ROAD_HALF_WIDTH, loadProfile, loadSessions, recommend, saveLevel, saveSession, saveTuning, clearTuning, type RehabProfile, type SessionSummary } from "../../../lib/racing/rehab";
 import { SerialSensor, sensorLog } from "../../../lib/racing/sensor";
+import RehabGuardianHost from "../../../components/sentry-sidekick/RehabGuardianHost";
 
 const COIN_SPACING = 520;
 const COURSE_LENGTH = 15000;
@@ -370,19 +371,6 @@ export default function RacingGame() {
       context.fillText(`◉ ${coins.toString().padStart(2, "0")}`, 34, height - 82);
       context.strokeText(`⚑ ${lap}/3`, 34, height - 39);
       context.fillText(`⚑ ${lap}/3`, 34, height - 39);
-      context.textAlign = "right";
-      context.font = "bold 92px monospace";
-      context.fillStyle = "#ffd438";
-      context.strokeStyle = "#fff9df";
-      context.lineWidth = 10;
-      context.strokeText("1", width - 74, height - 62);
-      context.fillText("1", width - 74, height - 62);
-      context.font = "bold 30px monospace";
-      context.fillStyle = "#fff9df";
-      context.strokeStyle = "#192131";
-      context.lineWidth = 7;
-      context.strokeText("ST", width - 33, height - 35);
-      context.fillText("ST", width - 33, height - 35);
 
       if (pickupFlash > 0) {
         context.fillStyle = `rgba(255, 221, 67, ${pickupFlash})`;
@@ -590,6 +578,21 @@ export default function RacingGame() {
       </section>
 
       <footer className="race-footer"><span>FOREARM ROTATION STEERS</span><span><i className="key wide">SPACE</i> PAUSE</span><b className={cameraLive ? "" : "idle"}><i /> {cameraLive ? "HAND TRACKING" : cameraStatus === "unsupported" ? "NO CAMERA SUPPORT" : "TRACKING OFF"}</b><b className={inputReady ? "" : "idle"}><i /> {sensorConnected ? "CONTROLLER LIVE" : sensorStatus === "unsupported" ? "USE CHROME OR EDGE" : "CONTROLLER NOT CONNECTED"}</b></footer>
+      <RehabGuardianHost
+        sensor={sensor}
+        inputMode="imu"
+        running={running}
+        gameEnded={snapshot.finished}
+        onPause={() => { setRunning(false); setSignalLost(true); }}
+        onReconnect={() => { void sensor.connect(); }}
+        onCalibrate={(command) => { void sensor.send(command); }}
+        onFallback={async () => {
+          if (tracker.status === "unsupported") return false;
+          await tracker.start();
+          return tracker.status === "live";
+        }}
+        onExit={() => { void sensor.disconnect(); window.location.assign("/dashboard"); }}
+      />
     </main>
   );
 }

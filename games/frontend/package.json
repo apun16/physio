@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "npm test --prefix ../.."
+    "test": "npm test --prefix ../..",
+    "test:guardian": "vitest run"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.0.1",
@@ -24,9 +25,12 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.3",
     "@types/react-dom": "^19.0.2",
+    "jsdom": "^30.1.0",
     "typescript": "^5.7.2",
     "vitest": "^3.2.7"
   }
