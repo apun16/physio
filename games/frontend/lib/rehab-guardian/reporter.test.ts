@@ -4,6 +4,8 @@ const sentry = vi.hoisted(() => ({
   captureException: vi.fn(),
   captureMessage: vi.fn(),
   addBreadcrumb: vi.fn(),
+  getClient: vi.fn(() => ({})),
+  init: vi.fn(),
   withScope: vi.fn((fn: (scope: { setTag: ReturnType<typeof vi.fn>; setFingerprint: ReturnType<typeof vi.fn>; setContext: ReturnType<typeof vi.fn> }) => void) => {
     fn({ setTag: vi.fn(), setFingerprint: vi.fn(), setContext: vi.fn() });
   }),
