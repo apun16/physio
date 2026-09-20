@@ -39,9 +39,7 @@ export default function RehabGuardianHost({ sensor, inputMode, running, game = "
   useEffect(() => {
     dispatch({ type: "session_start" });
     reportSpan("imu.session", "start");
-    const greet = window.setTimeout(() => dispatch({ type: "dismiss_greeting" }), 4000);
     return () => {
-      window.clearTimeout(greet);
       reportSpan("imu.session", "end");
       dispatch({ type: "session_end" });
     };
