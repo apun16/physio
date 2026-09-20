@@ -1,4 +1,4 @@
-# physio
+# RePlay
 
 upper-body physiotherapy game that turns real-world movement into an interactive training world. Patients complete short exercises, receive immediate visual and haptic feedback, and unlock new challenges as their range of motion, control, and strength improve.
 
