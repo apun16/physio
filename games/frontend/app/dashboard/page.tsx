@@ -11,7 +11,8 @@ import {
   Settings,
   Sparkles,
   Trophy,
-  Crosshair
+  Crosshair,
+  HeartPulse
 } from "lucide-react";
 import Link from "next/link";
 
@@ -53,6 +54,7 @@ export default function DashboardPage() {
         <nav aria-label="Dashboard navigation">
           <Link href="/" aria-label="Home"><Home size={18} /></Link>
           <Link className="active" href="/dashboard" aria-label="Worlds"><Map size={18} /></Link>
+          <Link href="/therapy" aria-label="Therapy game compiler"><HeartPulse size={18} /></Link>
           <Link href="/games/steer" aria-label="Play"><Gamepad2 size={18} /></Link>
           <button aria-label="Settings"><Settings size={18} /></button>
         </nav>
@@ -114,6 +116,11 @@ export default function DashboardPage() {
           </section>
 
           <aside className="portal-dashboard-rail">
+            <Link className="portal-therapy-link" href="/therapy">
+              <HeartPulse size={19} />
+              <span><small>ROX THERAPY</small><b>CREATE FROM YOUR NOTE</b></span>
+              <ArrowRight size={14} />
+            </Link>
             <section className="portal-rail-heading"><span>JOURNEY</span><b>Alex Morgan</b><small>Explorer · Level 08</small></section>
             <section className="portal-next-session">
               <div><span>NEXT SESSION</span><CalendarDays size={17} /></div>
