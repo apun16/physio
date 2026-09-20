@@ -24,7 +24,6 @@ describe("guardian state machine", () => {
     const noisy = [
       { type: "unrealistic_jump" as const },
       { type: "frozen_readings" as const },
-      { type: "stream_stale" as const, msSinceLastValid: 60_000 },
       { type: "command_ack_timeout" as const },
       { type: "command_write_failed" as const },
       { type: "malformed_frame" as const, at: 1 },
@@ -55,6 +54,15 @@ describe("guardian state machine", () => {
     expect(fromConnecting.failureType).toBeNull();
   });
 
+  it("hides the overlay if packets return after a Bluetooth drop", () => {
+    let state = reduce(healthy(), { type: "stream_stale", msSinceLastValid: 5_000 });
+    state = reduce(state, { type: "prompt_user" });
+    state = reduce(state, { type: "frames_stable" });
+    expect(state.phase).toBe("healthy");
+    expect(state.failureType).toBeNull();
+    expect(isSidekickVisible(state, true)).toBe(false);
+  });
+
   it("records successful recovery after a real disconnect", () => {
     let state = reduce(healthy(), { type: "unexpected_disconnect" });
     state = reduce(state, { type: "prompt_user" });
@@ -78,11 +86,38 @@ describe("guardian state machine", () => {
     expect(state.recoveryResult).toBe("unresolved");
   });
 
+  it("treats a dead serial stream as a surprise disconnect", () => {
+    const state = reduce(healthy(), { type: "stream_stale", msSinceLastValid: 5_000 });
+    expect(state.phase).toBe("failure_detected");
+    expect(state.failureType).toBe("stale_stream");
+    expect(state.sentryDeferred).toBe(false);
+    expect(state.msSinceLastValid).toBe(5_000);
+    expect(state.promptKind).toBe("intentional_disconnect");
+    expect(isSidekickVisible(state, true)).toBe(true);
+  });
+
+  it("keeps Beety up if USB unplugs while Bluetooth frames continue", () => {
+    let state = reduce(healthy(), { type: "unexpected_disconnect" });
+    state = reduce(state, { type: "prompt_user" });
+    state = reduce(state, { type: "frames_stable" });
+    expect(state.phase).toBe("awaiting_user");
+    expect(state.failureType).toBe("unexpected_disconnect");
+    expect(isSidekickVisible(state, true)).toBe(true);
+  });
+
+  it("treats a dead MPU6050 (jumper unplug) as a surprise disconnect", () => {
+    const state = reduce(healthy(), { type: "imu_unplugged" });
+    expect(state.phase).toBe("failure_detected");
+    expect(state.failureType).toBe("unexpected_disconnect");
+    expect(state.sentryDeferred).toBe(false);
+    expect(isSidekickVisible(state, true)).toBe(true);
+  });
+
   it("asks about surprise disconnect and suppresses a Yes", () => {
     let state = reduce(healthy(), { type: "unexpected_disconnect" });
     state = reduce(state, { type: "prompt_user" });
     expect(state.promptKind).toBe("intentional_disconnect");
-    expect(state.sentryDeferred).toBe(true);
+    expect(state.sentryDeferred).toBe(false);
     state = reduce(state, { type: "user_intent", intentional: true });
     expect(state.phase).toBe("pre_game");
     expect(state.failureType).toBeNull();
@@ -104,5 +139,14 @@ describe("guardian state machine", () => {
     const failed = reduce(live, { type: "unexpected_disconnect" });
     expect(isSidekickVisible(failed, false)).toBe(true);
     expect(isSidekickVisible(reduce(failed, { type: "prompt_user" }), true)).toBe(true);
+  });
+
+  it("still reports an unplug after the race or quest ends", () => {
+    const ended = reduce(healthy(), { type: "session_end" });
+    expect(ended.phase).toBe("ended");
+    const failed = reduce(ended, { type: "unexpected_disconnect" });
+    expect(failed.phase).toBe("failure_detected");
+    expect(failed.sentryDeferred).toBe(false);
+    expect(isSidekickVisible(failed, false)).toBe(true);
   });
 });

@@ -30,9 +30,9 @@ const FAILURE: Record<FailureType, SidekickCopy> = {
     question: "Did you disconnect the sensor intentionally?"
   },
   stale_stream: {
-    title: "Sensor updates paused",
-    body: "The connection still looks open, but no valid IMU frame arrived in time. Your session is paused so the character doesn't drift.",
-    question: "What did you notice?"
+    title: "Sensor disconnected",
+    body: "The ESP32 is still there, but IMU packets stopped. Your progress is paused, not lost.",
+    question: "Did you disconnect the sensor intentionally?"
   },
   persistent_malformed: {
     title: "Sensor packets look mixed up",

@@ -44,6 +44,7 @@ export type SensorReliabilityKind =
   | "malformed_frame"
   | "invalid_values"
   | "frozen_readings"
+  | "imu_unplugged"
   | "unrealistic_jump"
   | "command_write_failed"
   | "command_sent"
@@ -65,11 +66,22 @@ export type SensorReliabilityEvent = {
 export type SensorCommand = "center" | "rollRight" | "rollLeft" | "gyroCal";
 const COMMAND_CHAR: Record<SensorCommand, string> = { center: "c", rollRight: "r", rollLeft: "l", gyroCal: "b" };
 
-/** No frame for this long while connected = signal lost. */
-export const STALE_AFTER_MS = 60_000;
+/**
+ * No frame for this long while the port still says "connected" = the USB or
+ * Bluetooth link died. Chrome often leaves BT SPP open after a power-cut, so
+ * this is the real unplug detector. Player stillness still sends frames.
+ */
+export const STALE_AFTER_MS = 5_000;
 
 /** Identical MPU6050 readings for this long can mean a stuck sensor — not a player holding still. */
 export const FROZEN_AFTER_MS = 60_000;
+
+/**
+ * A connected MPU6050 still jitters. If roll/pitch/yaw stay flatter than this
+ * for IMU_UNPLUG_AFTER_MS, the jumper wires were almost certainly pulled.
+ */
+export const IMU_UNPLUG_AFTER_MS = 2_500;
+const DEAD_DEG = 0.05;
 
 /** Peak-to-peak over ~1s above these is real motion, not MPU6050 noise. */
 const ACTIVE_DEG = 4;
@@ -116,6 +128,11 @@ export function rangeLooksActive(min: SensorFrame, max: SensorFrame) {
     Math.abs((max.moveY ?? 0) - (min.moveY ?? 0)) > ACTIVE_NORM ||
     Math.abs((max.squeeze ?? 0) - (min.squeeze ?? 0)) > ACTIVE_NORM
   );
+}
+
+/** True when the MPU6050 looks electrically gone, not a person holding still. */
+export function imuWindowLooksDead(min: SensorFrame, max: SensorFrame) {
+  return max.roll - min.roll < DEAD_DEG && max.pitch - min.pitch < DEAD_DEG && max.yaw - min.yaw < DEAD_DEG;
 }
 
 /** Debug output: browser console plus the `npm run dev` terminal (via /api/sensor-log). */
@@ -172,9 +189,14 @@ interface SerialPortLike {
   close(): Promise<void>;
   readable: ReadableStream<Uint8Array> | null;
   writable: WritableStream<Uint8Array> | null;
+  addEventListener?(type: "disconnect", listener: () => void): void;
+  removeEventListener?(type: "disconnect", listener: () => void): void;
 }
 interface SerialLike {
   requestPort(): Promise<SerialPortLike>;
+  getPorts?(): Promise<SerialPortLike[]>;
+  addEventListener?(type: "disconnect", listener: (event: { target?: SerialPortLike | null }) => void): void;
+  removeEventListener?(type: "disconnect", listener: (event: { target?: SerialPortLike | null }) => void): void;
 }
 const getSerial = () => (typeof navigator === "undefined" ? undefined : (navigator as unknown as { serial?: SerialLike }).serial);
 
@@ -196,6 +218,10 @@ export class SerialSensor {
   private freezeWindowStart = 0;
   private freezeMin: SensorFrame | null = null;
   private freezeMax: SensorFrame | null = null;
+  private imuDeadSince = 0;
+  private firstFrameAt = 0;
+  private lastImuUnplugAt = 0;
+  private companionPorts: SerialPortLike[] = [];
 
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -233,6 +259,9 @@ export class SerialSensor {
     this.freezeWindowStart = 0;
     this.freezeMin = null;
     this.freezeMax = null;
+    this.imuDeadSince = 0;
+    this.firstFrameAt = 0;
+    this.lastImuUnplugAt = 0;
     this.lastSample = null;
     this.clearAckWait();
     try {
@@ -245,6 +274,8 @@ export class SerialSensor {
       sensorLog("port OPEN. Waiting for data (nothing below = port opened but ESP32 sent no bytes)");
       this.port = port;
       this.latest = null;
+      this.attachDisconnect(port, serial);
+      void this.watchCompanionPorts(serial, port);
       this.setStatus("connected");
       this.emitReliability("connected");
       void this.readLoop(port);
@@ -347,6 +378,7 @@ export class SerialSensor {
       this.clearAckWait();
       report();
       sensorLog("port closed");
+      this.detachDisconnect(port, getSerial());
       await port.close().catch(() => undefined);
       this.port = null;
       this.latest = null;
@@ -359,7 +391,57 @@ export class SerialSensor {
     }
   }
 
+  private nativeDisconnect = () => {
+    if (this.intentionalClose) return;
+    sensorLog("browser fired serial disconnect (unplug / Bluetooth drop)");
+    void this.reader?.cancel().catch(() => undefined);
+  };
+
+  private companionUnplug = () => {
+    if (this.intentionalClose || this.status !== "connected") return;
+    sensorLog("USB serial port disappeared while Bluetooth was still up (charge cable unplug)");
+    this.emitReliability("unexpected_disconnect");
+  };
+
+  private nativeSerialDisconnect = (event: { target?: SerialPortLike | null }) => {
+    if (this.intentionalClose) return;
+    if (!event.target || event.target === this.port) {
+      this.nativeDisconnect();
+      return;
+    }
+    this.companionUnplug();
+  };
+
+  private attachDisconnect(port: SerialPortLike, serial: SerialLike) {
+    port.addEventListener?.("disconnect", this.nativeDisconnect);
+    serial.addEventListener?.("disconnect", this.nativeSerialDisconnect);
+  }
+
+  private async watchCompanionPorts(serial: SerialLike, openPort: SerialPortLike) {
+    if (!serial.getPorts) return;
+    try {
+      const granted = await serial.getPorts();
+      for (const extra of granted) {
+        if (extra === openPort) continue;
+        extra.addEventListener?.("disconnect", this.companionUnplug);
+        this.companionPorts.push(extra);
+      }
+    } catch {
+      // Optional: the Bluetooth port is enough if Chrome hides other devices.
+    }
+  }
+
+  private detachDisconnect(port: SerialPortLike | null, serial: SerialLike | undefined) {
+    port?.removeEventListener?.("disconnect", this.nativeDisconnect);
+    serial?.removeEventListener?.("disconnect", this.nativeSerialDisconnect);
+    for (const extra of this.companionPorts) {
+      extra.removeEventListener?.("disconnect", this.companionUnplug);
+    }
+    this.companionPorts = [];
+  }
+
   private noteValidFrame(frame: SensorFrame) {
+    if (!this.firstFrameAt) this.firstFrameAt = frame.t;
     if (!this.freezeMin || !this.freezeMax || !this.freezeWindowStart) {
       this.freezeMin = frame;
       this.freezeMax = frame;
@@ -373,6 +455,11 @@ export class SerialSensor {
         } else if (!this.freezeStartedAt) {
           this.freezeStartedAt = this.freezeWindowStart;
         }
+        if (imuWindowLooksDead(this.freezeMin, this.freezeMax)) {
+          if (!this.imuDeadSince) this.imuDeadSince = this.freezeWindowStart;
+        } else {
+          this.imuDeadSince = 0;
+        }
         this.freezeMin = frame;
         this.freezeMax = frame;
         this.freezeWindowStart = frame.t;
@@ -381,6 +468,15 @@ export class SerialSensor {
     if (this.freezeStartedAt && frame.t - this.freezeStartedAt > FROZEN_AFTER_MS) {
       this.emitReliability("frozen_readings");
       this.freezeStartedAt = frame.t;
+    }
+    if (
+      this.imuDeadSince &&
+      frame.t - this.firstFrameAt >= 1000 &&
+      frame.t - this.imuDeadSince >= IMU_UNPLUG_AFTER_MS &&
+      frame.t - this.lastImuUnplugAt > 8000
+    ) {
+      this.lastImuUnplugAt = frame.t;
+      this.emitReliability("imu_unplugged");
     }
 
     const previous = this.lastSample;

@@ -14,7 +14,13 @@ function at(event: GuardianEvent, fallback: number) {
 }
 
 function promptFor(failureType: FailureType): PromptKind {
-  if (failureType === "unexpected_disconnect" || failureType === "read_loop_failure") return "intentional_disconnect";
+  if (
+    failureType === "unexpected_disconnect" ||
+    failureType === "read_loop_failure" ||
+    failureType === "stale_stream"
+  ) {
+    return "intentional_disconnect";
+  }
   if (failureType === "frozen_readings") return "stillness";
   return "diagnosis";
 }
@@ -24,12 +30,12 @@ function beginIncident(state: GuardianState, failureType: FailureType, now: numb
   if (INCIDENT_PHASES.has(state.phase) && state.failureType === failureType) {
     return { ...state, lastEventAt: now, ...extra };
   }
-  if (INCIDENT_PHASES.has(state.phase) && (failureType === "unexpected_disconnect" || failureType === "read_loop_failure")) {
+  if (INCIDENT_PHASES.has(state.phase) && (failureType === "unexpected_disconnect" || failureType === "read_loop_failure" || failureType === "stale_stream")) {
     return {
       ...state,
       failureType,
       promptKind: "intentional_disconnect",
-      sentryDeferred: true,
+      sentryDeferred: false,
       greetingActive: false,
       lastEventAt: now,
       ...extra
@@ -84,7 +90,16 @@ function recoverIfStreamReturned(state: GuardianState, now: number): GuardianSta
 /** Deterministic Guardian reducer. Safe to unit-test without the DOM or Sentry. */
 export function reduce(state: GuardianState, event: GuardianEvent): GuardianState {
   const now = at(event, state.lastEventAt);
-  if (state.phase === "ended" && event.type !== "session_start") return state;
+  if (
+    state.phase === "ended" &&
+    event.type !== "session_start" &&
+    event.type !== "unexpected_disconnect" &&
+    event.type !== "read_loop_failure" &&
+    event.type !== "stream_stale" &&
+    event.type !== "imu_unplugged"
+  ) {
+    return state;
+  }
 
   switch (event.type) {
     case "session_start":
@@ -96,6 +111,7 @@ export function reduce(state: GuardianState, event: GuardianEvent): GuardianStat
     case "set_source":
       return { ...state, source: event.source, lastEventAt: now };
     case "session_end":
+      if (INCIDENT_PHASES.has(state.phase)) return { ...state, lastEventAt: now };
       return { ...state, phase: "ended", greetingActive: false, promptKind: "none", lastEventAt: now };
 
     case "port_picker_cancelled":
@@ -129,9 +145,12 @@ export function reduce(state: GuardianState, event: GuardianEvent): GuardianStat
     case "command_ack_timeout":
     case "command_write_failed":
     case "frozen_readings":
-    case "stream_stale":
-      // Demo-safe: never overlay for noisy MPU6050 play, stillness, or brief BT gaps.
+      // Demo-safe: never overlay for noisy MPU6050 play or a player holding still.
       return { ...state, lastEventAt: now };
+    case "stream_stale":
+      // Packets fully stopped while Chrome still says connected (typical BT drop).
+      if (state.inputMode === "hand") return { ...state, lastEventAt: now };
+      return beginIncident(state, "stale_stream", now, { msSinceLastValid: event.msSinceLastValid });
     case "fallback_failed":
       return beginIncident(state, "fallback_failed", now);
 
@@ -179,9 +198,9 @@ export function reduce(state: GuardianState, event: GuardianEvent): GuardianStat
 
     case "unexpected_disconnect":
     case "read_loop_failure":
+    case "imu_unplugged":
       if (state.inputMode === "hand") return { ...state, lastEventAt: now };
-      if (state.phase === "pre_game" || state.phase === "ended") return { ...state, lastEventAt: now };
-      return beginIncident(state, event.type, now);
+      return beginIncident(state, event.type === "imu_unplugged" ? "unexpected_disconnect" : event.type, now);
 
     case "prompt_user":
       if (state.phase === "failure_detected") return { ...state, phase: "awaiting_user", lastEventAt: now };

@@ -32,9 +32,7 @@ export default function RehabGuardianHost({ sensor, inputMode, running, game = "
   const [calibratePending, setCalibratePending] = useState(false);
   const prevPhase = useRef(state.phase);
   const inputModeRef = useRef(inputMode);
-  const endedRef = useRef(gameEnded);
   inputModeRef.current = inputMode;
-  endedRef.current = gameEnded;
 
   useEffect(() => {
     dispatch({ type: "session_start" });
@@ -56,7 +54,7 @@ export default function RehabGuardianHost({ sensor, inputMode, running, game = "
   useEffect(() => {
     return watchSensor(sensor, (event) => {
       try { dispatch(event); } catch { reportSidekickFailure(game); }
-    }, { getInputMode: () => inputModeRef.current, getEnded: () => endedRef.current });
+    }, { getInputMode: () => inputModeRef.current });
   }, [sensor]);
 
   useEffect(() => {

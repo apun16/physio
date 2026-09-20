@@ -43,13 +43,25 @@ export function sanitizeIncident(state: GuardianState, environment = "developmen
   };
 }
 
+const SKIP_FORBIDDEN = new Set([
+  "incidentId",
+  "failureType",
+  "game",
+  "component",
+  "inputMode",
+  "source",
+  "firmwarePacket",
+  "appVersion",
+  "environment"
+]);
+
 export function assertSanitized(payload: SanitizedIncident) {
   const keys = Object.keys(payload);
   if (keys.some((key) => !ALLOWED_KEYS.includes(key as (typeof ALLOWED_KEYS)[number]))) {
     throw new Error("unexpected sentry field");
   }
   for (const [key, value] of Object.entries(payload)) {
-    if (key === "firmwarePacket" && value === "five-field") continue;
+    if (SKIP_FORBIDDEN.has(key)) continue;
     if (typeof value === "string" && FORBIDDEN.test(value)) {
       throw new Error("payload looks like raw sensor or personal data");
     }
