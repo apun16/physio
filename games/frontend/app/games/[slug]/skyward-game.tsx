@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Bluetooth, RotateCcw } from "lucide-react";
+import { ArrowLeft, Bluetooth, Play, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { loadSkywardAssets, type SkywardAssets } from "@/lib/skyward/assets";
@@ -104,6 +104,8 @@ export default function SkywardGame() {
   }, [sensor]);
 
   const sensorConnected = sensorStatus === "connected";
+  const [dismissedConnect, setDismissedConnect] = useState(false);
+  const showConnect = !sensorConnected && !dismissedConnect && sensorStatus !== "unsupported";
 
   return (
     <main className="race-page skyward-page">
@@ -138,6 +140,18 @@ export default function SkywardGame() {
               <button onClick={() => { resetRef.current += 1; }}><RotateCcw size={15} /> REPLAY</button>
               <Link href="/dashboard">QUEST HUB</Link>
             </div>
+          </div>
+        )}
+        {showConnect && ready && !failed && (
+          <div className="skyward-connect" role="dialog" aria-label="Connect your controller">
+            <span>SKYWARD JOURNEY</span>
+            <h1>Connect your controller</h1>
+            <p>Squeeze and release to loose an arrow. Sweep your hand right to slash. Raise your arm to hold the shield.</p>
+            <button className="go" onClick={() => void sensor.connect()}>
+              <Play size={16} /> {sensorStatus === "connecting" ? "CONNECTING…" : "CONNECT CONTROLLER"}
+            </button>
+            <button className="skip" onClick={() => setDismissedConnect(true)}>PLAY WITH KEYBOARD</button>
+            {sensor.error && <small>{sensor.error}</small>}
           </div>
         )}
         {failed && <p className="skyward-status">{failed}</p>}

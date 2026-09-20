@@ -1,4 +1,4 @@
-import type { SerialSensor } from "../racing/sensor";
+import { sensorLog, type SerialSensor } from "../racing/sensor";
 
 export type SlashDirection = "horizontal" | "vertical" | "diagonal";
 
@@ -22,28 +22,48 @@ export class IdleInputProvider implements InputProvider {
 }
 
 /**
- * Gesture thresholds for the hardware controller. All are deliberately generous
- * so a slow, deliberate rehab movement still registers.
+ * Gesture thresholds for the hardware controller.
+ *
+ * Field names match `games/backend/Hardware/Python/full.py`, which prints the
+ * same stream: roll, pitch, yaw, steer, moveX, moveY, rawFsr, squeeze.
  */
 export const IMU_TUNING = {
-  /** Squeeze (0..1) above this counts as drawing the bow. */
+  /** Squeeze (0..1) above this draws the bow. */
   drawMin: 0.18,
-  /** Easing off this far below the peak squeeze looses the arrow. */
+  /** Easing back to this share of the peak squeeze looses the arrow. */
+  releaseFraction: 0.7,
+  /** ...or this much below the peak, whichever comes first. */
   releaseDrop: 0.12,
-  /** Pitch in degrees above neutral that raises the shield... */
-  shieldUp: 14,
-  /** ...and the lower edge it has to fall back through to drop it (hysteresis). */
-  shieldDown: 8,
-  /** Rightward move-X rate, units per second, that counts as a slash. */
-  slashRate: 1.4,
-  /** Minimum gap between slashes, seconds. */
-  slashCooldown: 0.45
+  /**
+   * Which way a sweep has to go to swing the sword. "either" takes the
+   * magnitude so it fires whichever sign the calibration produces — pin it to
+   * "right" or "left" once the direction is confirmed on real data.
+   */
+  slashAxis: "either" as "either" | "right" | "left",
+  /** Sweep value at or beyond this swings the sword. */
+  slashAt: 0.4,
+  /** The sweep has to fall back inside this before another slash can fire. */
+  slashRearm: 0.15,
+  /**
+   * Same idea for the shield: by default any large pitch deflection raises it,
+   * so it works whether raising the arm reads as + or - pitch. Set false and
+   * use pitchSign once the direction is confirmed.
+   */
+  shieldUseMagnitude: true,
+  /** Applied when shieldUseMagnitude is false; -1 flips a raised arm. */
+  pitchSign: 1,
+  /** Pitch (deg) that raises the shield... */
+  shieldUp: 12,
+  /** ...and the edge it must fall back through to drop it. */
+  shieldDown: 6,
+  /** Seconds between debug lines printed to the dev terminal. 0 disables. */
+  logEvery: 0.25
 };
 
 /**
  * Maps the ESP-32 controller onto the three combat gestures:
  *   bow    — squeeze to draw, ease off to loose the arrow
- *   slash  — a linear move of the hand to the right
+ *   slash  — sweep the hand right, i.e. the linear moveX value crossing slashAt
  *   shield — raising the pitch angle, held while it stays raised
  *
  * Needs the 8-field firmware (htn_final.ino) for the force sensor; on the
@@ -51,16 +71,15 @@ export const IMU_TUNING = {
  */
 export class IMUInputProvider implements InputProvider {
   private lastT = 0;
-  private lastMoveX = 0;
   private peakDraw = 0;
   private drawing = false;
   private shield = false;
-  private slashCool = 0;
+  private slashArmed = true;
+  private logT = 0;
   private started = false;
 
   constructor(private sensor: SerialSensor) {}
 
-  /** True once a fresh frame has been seen; drives the "controller live" readout. */
   get live() {
     return this.sensor.isLive(performance.now());
   }
@@ -69,13 +88,12 @@ export class IMUInputProvider implements InputProvider {
     this.started = false;
     this.drawing = false;
     this.peakDraw = 0;
-    this.slashCool = 0;
+    this.slashArmed = true;
   }
 
   poll(): GameAction[] {
     const now = performance.now();
     if (!this.sensor.isLive(now)) {
-      // Drop the shield rather than leave it stuck up on a dead controller.
       if (this.shield) {
         this.shield = false;
         this.reset();
@@ -90,48 +108,71 @@ export class IMUInputProvider implements InputProvider {
     this.lastT = frame.t;
 
     const actions: GameAction[] = [];
-    this.slashCool = Math.max(0, this.slashCool - dt);
+    const moveX = frame.move;
+    // Direction-agnostic for now: magnitude unless an axis has been pinned.
+    const sweep = IMU_TUNING.slashAxis === "right" ? moveX : IMU_TUNING.slashAxis === "left" ? -moveX : Math.abs(moveX);
+    const pitch = IMU_TUNING.shieldUseMagnitude ? Math.abs(frame.pitch) : frame.pitch * IMU_TUNING.pitchSign;
+    const squeeze = frame.squeeze;
 
-    // Shield: pitch angle rising, with hysteresis so it does not flicker.
-    const raised = this.shield ? frame.pitch > IMU_TUNING.shieldDown : frame.pitch > IMU_TUNING.shieldUp;
+    // Shield: pitch angle raised, with hysteresis so it does not flicker.
+    const raised = this.shield ? pitch > IMU_TUNING.shieldDown : pitch > IMU_TUNING.shieldUp;
     if (raised !== this.shield) {
       this.shield = raised;
       actions.push({ type: "ShieldState", active: raised });
+      sensorLog(`zelda SHIELD ${raised ? "UP" : "DOWN"} (pitch=${pitch.toFixed(2)})`);
     }
 
-    // Slash: a rightward linear move of the hand.
-    if (this.started && this.slashCool <= 0) {
-      const rate = (frame.move - this.lastMoveX) / dt;
-      if (rate >= IMU_TUNING.slashRate) {
-        this.slashCool = IMU_TUNING.slashCooldown;
-        actions.push({
-          type: "SwordSlash",
-          direction: "horizontal",
-          // A just-threshold sweep lands on STRONG_HIT; faster scales to full.
-          velocity: Math.min(1, 0.5 + (rate - IMU_TUNING.slashRate) / (IMU_TUNING.slashRate * 2))
-        });
-      }
+    // Slash: the linear X value swept to the right. Using the value rather than
+    // its rate means a slow, deliberate rehab sweep still counts; it re-arms
+    // once the hand comes back inside slashRearm.
+    if (!this.slashArmed && sweep < IMU_TUNING.slashRearm) this.slashArmed = true;
+    if (this.slashArmed && sweep >= IMU_TUNING.slashAt) {
+      this.slashArmed = false;
+      const reach = Math.min(1, (sweep - IMU_TUNING.slashAt) / Math.max(0.01, 1 - IMU_TUNING.slashAt));
+      actions.push({ type: "SwordSlash", direction: "horizontal", velocity: 0.55 + reach * 0.45 });
+      sensorLog(`zelda SLASH (X=${moveX.toFixed(2)} sweep=${sweep.toFixed(2)})`);
     }
-    this.lastMoveX = frame.move;
 
     // Bow: squeeze draws, easing off looses.
-    const squeeze = frame.squeeze;
     if (squeeze !== null) {
-      const eased = this.drawing && this.peakDraw - squeeze >= IMU_TUNING.releaseDrop;
-      if (this.drawing && (squeeze < IMU_TUNING.drawMin || eased)) {
-        this.drawing = false;
-        this.peakDraw = 0;
-        actions.push({ type: "BowRelease" });
-        actions.push({ type: "BowDraw", amount: 0 });
+      if (this.drawing) {
+        const floor = Math.max(IMU_TUNING.drawMin * 0.9, Math.min(this.peakDraw * IMU_TUNING.releaseFraction, this.peakDraw - IMU_TUNING.releaseDrop));
+        if (squeeze <= floor) {
+          sensorLog(`zelda BOW RELEASE (peak=${this.peakDraw.toFixed(2)} -> ${squeeze.toFixed(2)}, floor=${floor.toFixed(2)})`);
+          this.drawing = false;
+          this.peakDraw = 0;
+          actions.push({ type: "BowRelease" });
+          actions.push({ type: "BowDraw", amount: 0 });
+        } else {
+          this.peakDraw = Math.max(this.peakDraw, squeeze);
+          actions.push({ type: "BowDraw", amount: squeeze });
+        }
       } else if (squeeze >= IMU_TUNING.drawMin) {
         this.drawing = true;
-        this.peakDraw = Math.max(this.peakDraw, squeeze);
+        this.peakDraw = squeeze;
         actions.push({ type: "BowDraw", amount: squeeze });
+        sensorLog(`zelda BOW DRAW start (squeeze=${squeeze.toFixed(2)})`);
       }
     }
 
-    // Aim rides the vertical move axis; the other axes are spoken for.
     actions.push({ type: "BowAim", x: 1, y: Math.max(-1, Math.min(1, frame.moveY ?? 0)) });
+
+    // Same columns full.py prints, so the two can be compared side by side.
+    if (IMU_TUNING.logEvery > 0) {
+      this.logT += dt;
+      if (this.logT >= IMU_TUNING.logEvery) {
+        this.logT = 0;
+        sensorLog(
+          `zelda roll=${frame.roll.toFixed(2)} pitch=${frame.pitch.toFixed(2)} yaw=${frame.yaw.toFixed(2)} steer=${frame.steer.toFixed(2)}` +
+            ` | X=${moveX.toFixed(2)} Y=${(frame.moveY ?? 0).toFixed(2)}` +
+            ` | FSR=${frame.rawFsr ?? "-"} squeeze=${squeeze === null ? "-" : squeeze.toFixed(3)}` +
+            `(${squeeze === null ? "-" : Math.round(squeeze * 255)}/255)` +
+            ` || sweep=${sweep.toFixed(2)}/${IMU_TUNING.slashAt} armed=${this.slashArmed}` +
+            ` pitch=${pitch.toFixed(1)}/${IMU_TUNING.shieldUp} shield=${this.shield}` +
+            ` draw=${this.drawing ? this.peakDraw.toFixed(2) : "-"}`
+        );
+      }
+    }
 
     this.started = true;
     return actions;

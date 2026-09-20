@@ -46,6 +46,12 @@ export function sensorLog(message: string) {
 }
 
 const clamp1 = (value: number) => Math.max(-1, Math.min(1, value));
+/**
+ * Squeeze arrives as 0..1 from the firmware, but the game-facing mapping is the
+ * 0..255 byte (see the squeeze_255 line in full.py). Accept either: anything
+ * above 1 is treated as the byte scale and brought back to 0..1.
+ */
+const normSqueeze = (value: number) => (value > 1.5 ? value / 255 : value);
 
 export function parseFrame(line: string, t: number): SensorFrame | null {
   const text = line.trim();
@@ -63,7 +69,7 @@ export function parseFrame(line: string, t: number): SensorFrame | null {
     steer: clamp1(steer),
     move: clamp1(move),
     moveY: parts.length === 8 ? clamp1(moveY) : null,
-    squeeze: parts.length === 8 ? Math.max(0, Math.min(1, squeeze)) : null,
+    squeeze: parts.length === 8 ? Math.max(0, Math.min(1, normSqueeze(squeeze))) : null,
     rawFsr: parts.length === 8 ? rawFsr : null,
     t
   };
