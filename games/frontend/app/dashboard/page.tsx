@@ -48,7 +48,7 @@ export default function DashboardPage() {
     <main className="portal-dashboard">
       <div className="crt-layer" />
       <aside className="portal-side">
-        <Link className="portal-side-logo" href="/" aria-label="Pulse Verse home">
+        <Link className="portal-side-logo" href="/" aria-label="RePlay home">
           <span className="pixel-mark" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /></span>
         </Link>
         <nav aria-label="Dashboard navigation">

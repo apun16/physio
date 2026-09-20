@@ -17,7 +17,7 @@ export default function BootIntro() {
     <div
       className="boot-intro"
       role="status"
-      aria-label="Pulse Verse starting"
+      aria-label="RePlay starting"
       onClick={() => setVisible(false)}
     >
       <div className="boot-stars" aria-hidden="true">
@@ -28,7 +28,7 @@ export default function BootIntro() {
         {Array.from({ length: 9 }, (_, index) => <i key={index} />)}
       </div>
       <div className="boot-wordmark">
-        <span>PULSE</span><b>//VERSE</b>
+        <span>Re<b>Play</b></span>
       </div>
       <div className="boot-ready">MOVEMENT SYSTEM ONLINE</div>
       <button type="button" onClick={() => setVisible(false)}>SKIP</button>
