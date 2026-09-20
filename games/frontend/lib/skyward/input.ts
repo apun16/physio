@@ -29,11 +29,20 @@ export class IdleInputProvider implements InputProvider {
  */
 export const IMU_TUNING = {
   /** Squeeze (0..1) above this draws the bow. */
-  drawMin: 0.18,
+  drawMin: 0.15,
+  /**
+   * Squeeze that counts as a full draw. The game discards a release below
+   * bowDraw 0.38 (state.ts releaseBow), so a patient who can only reach ~0.3
+   * would draw the bow and never loose. Scaling against a realistic maximum
+   * rather than the theoretical 1.0 keeps a modest grip a usable shot.
+   */
+  fullDrawAt: 0.55,
   /** Easing back to this share of the peak squeeze looses the arrow. */
   releaseFraction: 0.7,
   /** ...or this much below the peak, whichever comes first. */
-  releaseDrop: 0.12,
+  releaseDrop: 0.1,
+  /** A drop faster than this (draw units per second) looses immediately. */
+  releaseRate: 1.2,
   /**
    * Which way a sweep has to go to swing the sword. "either" takes the
    * magnitude so it fires whichever sign the calibration produces — pin it to
@@ -41,13 +50,18 @@ export const IMU_TUNING = {
    */
   slashAxis: "either" as "either" | "right" | "left",
   /** Sweep value at or beyond this swings the sword. */
-  slashAt: 0.4,
+  slashAt: 0.25,
   /** The sweep has to fall back inside this before another slash can fire. */
-  slashRearm: 0.15,
+  slashRearm: 0.1,
   /**
-   * Same idea for the shield: by default any large pitch deflection raises it,
-   * so it works whether raising the arm reads as + or - pitch. Set false and
-   * use pitchSign once the direction is confirmed.
+   * Shield is off: pitch and the linear X sweep were tripping each other, and a
+   * stuck shield also blocks the bow (state.ts apply() ignores BowDraw while
+   * shielding). Flip to true to bring it back.
+   */
+  shieldEnabled: false,
+  /**
+   * Any large pitch deflection raises it, so it works whether raising the arm
+   * reads as + or - pitch. Set false and use pitchSign once confirmed.
    */
   shieldUseMagnitude: true,
   /** Applied when shieldUseMagnitude is false; -1 flips a raised arm. */
@@ -72,6 +86,7 @@ export const IMU_TUNING = {
 export class IMUInputProvider implements InputProvider {
   private lastT = 0;
   private peakDraw = 0;
+  private lastSqueeze = 0;
   private drawing = false;
   private shield = false;
   private slashArmed = true;
@@ -84,10 +99,16 @@ export class IMUInputProvider implements InputProvider {
     return this.sensor.isLive(performance.now());
   }
 
+  /** The peak squeeze expressed as a draw the game will accept. */
+  private peakDrawScaled() {
+    return Math.min(1, this.peakDraw / Math.max(0.05, IMU_TUNING.fullDrawAt));
+  }
+
   private reset() {
     this.started = false;
     this.drawing = false;
     this.peakDraw = 0;
+    this.lastSqueeze = 0;
     this.slashArmed = true;
   }
 
@@ -115,11 +136,17 @@ export class IMUInputProvider implements InputProvider {
     const squeeze = frame.squeeze;
 
     // Shield: pitch angle raised, with hysteresis so it does not flicker.
-    const raised = this.shield ? pitch > IMU_TUNING.shieldDown : pitch > IMU_TUNING.shieldUp;
-    if (raised !== this.shield) {
-      this.shield = raised;
-      actions.push({ type: "ShieldState", active: raised });
-      sensorLog(`zelda SHIELD ${raised ? "UP" : "DOWN"} (pitch=${pitch.toFixed(2)})`);
+    if (IMU_TUNING.shieldEnabled) {
+      const raised = this.shield ? pitch > IMU_TUNING.shieldDown : pitch > IMU_TUNING.shieldUp;
+      if (raised !== this.shield) {
+        this.shield = raised;
+        actions.push({ type: "ShieldState", active: raised });
+        sensorLog(`zelda SHIELD ${raised ? "UP" : "DOWN"} (pitch=${pitch.toFixed(2)})`);
+      }
+    } else if (this.shield) {
+      // Make sure a shield raised before it was disabled cannot stay stuck up.
+      this.shield = false;
+      actions.push({ type: "ShieldState", active: false });
     }
 
     // Slash: the linear X value swept to the right. Using the value rather than
@@ -135,24 +162,37 @@ export class IMUInputProvider implements InputProvider {
 
     // Bow: squeeze draws, easing off looses.
     if (squeeze !== null) {
+      // Scale to a draw the game will accept: see fullDrawAt.
+      const draw = Math.min(1, squeeze / Math.max(0.05, IMU_TUNING.fullDrawAt));
+      const dropRate = dt > 0 ? (this.lastSqueeze - squeeze) / dt : 0;
       if (this.drawing) {
-        const floor = Math.max(IMU_TUNING.drawMin * 0.9, Math.min(this.peakDraw * IMU_TUNING.releaseFraction, this.peakDraw - IMU_TUNING.releaseDrop));
-        if (squeeze <= floor) {
-          sensorLog(`zelda BOW RELEASE (peak=${this.peakDraw.toFixed(2)} -> ${squeeze.toFixed(2)}, floor=${floor.toFixed(2)})`);
-          this.drawing = false;
-          this.peakDraw = 0;
+        const floor = Math.min(this.peakDraw * IMU_TUNING.releaseFraction, this.peakDraw - IMU_TUNING.releaseDrop);
+        // Pressure high then suddenly low looses the arrow, whether that shows
+        // up as falling under the floor or as one fast drop between frames.
+        const sharp = dropRate >= IMU_TUNING.releaseRate;
+        if (squeeze <= floor || squeeze < IMU_TUNING.drawMin || sharp) {
+          sensorLog(
+            `zelda BOW RELEASE peak=${this.peakDraw.toFixed(2)} -> ${squeeze.toFixed(2)}` +
+              ` (floor=${floor.toFixed(2)} dropRate=${dropRate.toFixed(2)}${sharp ? " SHARP" : ""}) draw sent=${this.peakDrawScaled().toFixed(2)}`
+          );
+          // Hand the game the peak draw first: releaseBow() reads hero.bowDraw,
+          // and anything under 0.38 there is silently discarded.
+          actions.push({ type: "BowDraw", amount: this.peakDrawScaled() });
           actions.push({ type: "BowRelease" });
           actions.push({ type: "BowDraw", amount: 0 });
+          this.drawing = false;
+          this.peakDraw = 0;
         } else {
           this.peakDraw = Math.max(this.peakDraw, squeeze);
-          actions.push({ type: "BowDraw", amount: squeeze });
+          actions.push({ type: "BowDraw", amount: draw });
         }
       } else if (squeeze >= IMU_TUNING.drawMin) {
         this.drawing = true;
         this.peakDraw = squeeze;
-        actions.push({ type: "BowDraw", amount: squeeze });
-        sensorLog(`zelda BOW DRAW start (squeeze=${squeeze.toFixed(2)})`);
+        actions.push({ type: "BowDraw", amount: draw });
+        sensorLog(`zelda BOW DRAW start (squeeze=${squeeze.toFixed(2)} -> draw=${draw.toFixed(2)})`);
       }
+      this.lastSqueeze = squeeze;
     }
 
     actions.push({ type: "BowAim", x: 1, y: Math.max(-1, Math.min(1, frame.moveY ?? 0)) });
@@ -168,7 +208,7 @@ export class IMUInputProvider implements InputProvider {
             ` | FSR=${frame.rawFsr ?? "-"} squeeze=${squeeze === null ? "-" : squeeze.toFixed(3)}` +
             `(${squeeze === null ? "-" : Math.round(squeeze * 255)}/255)` +
             ` || sweep=${sweep.toFixed(2)}/${IMU_TUNING.slashAt} armed=${this.slashArmed}` +
-            ` pitch=${pitch.toFixed(1)}/${IMU_TUNING.shieldUp} shield=${this.shield}` +
+            ` pitch=${pitch.toFixed(1)} shield=${IMU_TUNING.shieldEnabled ? String(this.shield) : "off"}` +
             ` draw=${this.drawing ? this.peakDraw.toFixed(2) : "-"}`
         );
       }

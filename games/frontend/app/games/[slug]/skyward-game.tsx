@@ -146,7 +146,7 @@ export default function SkywardGame() {
           <div className="skyward-connect" role="dialog" aria-label="Connect your controller">
             <span>SKYWARD JOURNEY</span>
             <h1>Connect your controller</h1>
-            <p>Squeeze and release to loose an arrow. Sweep your hand right to slash. Raise your arm to hold the shield.</p>
+            <p>Squeeze to draw the bow, then let go to loose the arrow. Sweep your hand sideways to slash.</p>
             <button className="go" onClick={() => void sensor.connect()}>
               <Play size={16} /> {sensorStatus === "connecting" ? "CONNECTING…" : "CONNECT CONTROLLER"}
             </button>
@@ -159,9 +159,8 @@ export default function SkywardGame() {
       </section>
       <footer className="race-footer">
         <span>SQUEEZE &amp; RELEASE — BOW</span>
-        <span>SWEEP RIGHT — SLASH</span>
-        <span>RAISE PITCH — SHIELD</span>
-        <b className={sensorConnected ? "" : "idle"}><i /> {sensorConnected ? "CONTROLLER LIVE" : sensorStatus === "unsupported" ? "USE CHROME OR EDGE" : "CONTROLLER NOT CONNECTED — J/K/L, F, E"}</b>
+        <span>SWEEP SIDEWAYS — SLASH</span>
+        <b className={sensorConnected ? "" : "idle"}><i /> {sensorConnected ? "CONTROLLER LIVE" : sensorStatus === "unsupported" ? "USE CHROME OR EDGE" : "CONTROLLER NOT CONNECTED — J/K/L, E"}</b>
       </footer>
     </main>
   );
