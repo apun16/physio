@@ -506,17 +506,6 @@ export default function RacingGame() {
           </div>
           <small>{tracker.error || "Tracking only — the camera watches your hand for the end-of-run trajectory report. It does not steer."}</small>
         </div>
-        {sensorConnected && !snapshot.finished && (
-          <div className="sensor-panel">
-            <span>LEVEL {profile.level} · {profile.label.toUpperCase()}{profile.tuned ? " · AI-TUNED" : ""}</span>
-            <div className="sensor-steps">
-              <button onClick={() => sensor.send("center")}>1 · HOLD NEUTRAL, SET CENTER</button>
-              <button onClick={() => sensor.send("rollRight")}>2 · TURN RIGHT, SAVE LIMIT</button>
-              <button onClick={() => sensor.send("rollLeft")}>3 · TURN LEFT, SAVE LIMIT</button>
-            </div>
-            <small>Rotate your forearm to steer. Limits are saved to your comfortable range.</small>
-          </div>
-        )}
         {!running && !snapshot.finished && <button className="race-start" onClick={startRace}><Play size={21} fill="currentColor" /><span>{signalLost ? "CONTROLLER LOST" : !inputReady ? "CONNECT CONTROLLER" : snapshot.time === "00:00.000" ? "START RACE" : "RESUME"}</span><small>{signalLost ? "RECONNECT OR CHECK THE DEVICE, THEN RESUME" : !sensorConnected ? (sensorStatus === "unsupported" ? "CONTROLLER NEEDS CHROME OR EDGE" : "CLICK TO CONNECT YOUR CONTROLLER") : cameraLive ? "ROTATE YOUR FOREARM TO STEER — HAND TRACKING ON" : "ROTATE YOUR FOREARM TO STEER — TURN ON TRACKING FOR THE HAND REPORT"}</small></button>}
         {snapshot.finished && (
           <div className="finish-screen" role="dialog" aria-label="Race complete">
