@@ -26,13 +26,7 @@ function renderSidekick(state = createGuardian(), running = false) {
 describe("Sentry Sidekick", () => {
   afterEach(() => cleanup());
 
-  it("shows Beety's intro speech box during greeting", async () => {
-    renderSidekick({ ...createGuardian(), greetingActive: true });
-    expect(await screen.findByRole("status", { name: /beety the bug/i })).toBeTruthy();
-    expect(screen.getByText(/hi i'm beety the bug here to help!/i)).toBeTruthy();
-  });
-
-  it("hides Beety after the greeting when there is no error", async () => {
+  it("stays hidden while the IMU is connected and healthy", async () => {
     const healthy = reduce(reduce(createGuardian(), { type: "connecting" }), { type: "first_valid_frame" });
     renderSidekick(healthy, true);
     await waitFor(() => {

@@ -75,7 +75,7 @@ export function reduce(state: GuardianState, event: GuardianEvent): GuardianStat
 
   switch (event.type) {
     case "session_start":
-      return { ...INITIAL_GUARDIAN_STATE, greetingActive: true, lastEventAt: now, source: "real", inputMode: state.inputMode };
+      return { ...INITIAL_GUARDIAN_STATE, greetingActive: false, lastEventAt: now, source: "real", inputMode: state.inputMode };
     case "dismiss_greeting":
       return { ...state, greetingActive: false, lastEventAt: now };
     case "set_input_mode":
@@ -113,14 +113,12 @@ export function reduce(state: GuardianState, event: GuardianEvent): GuardianStat
     case "port_open_failed":
       return beginIncident(state, "port_open_failed", now);
     case "unrealistic_jump":
-      if (!LIVE_PHASES.has(state.phase)) return { ...state, lastEventAt: now };
-      return beginIncident(state, "unrealistic_jump", now);
+    case "command_ack_timeout":
+    case "command_write_failed":
+      return { ...state, lastEventAt: now };
     case "frozen_readings":
       if (!LIVE_PHASES.has(state.phase)) return { ...state, lastEventAt: now };
       return beginIncident(state, "frozen_readings", now);
-    case "command_ack_timeout":
-      if (state.phase === "pre_game" || state.phase === "ended") return { ...state, lastEventAt: now };
-      return beginIncident(state, "command_ack_timeout", now);
     case "fallback_failed":
       return beginIncident(state, "fallback_failed", now);
 
@@ -189,10 +187,6 @@ export function reduce(state: GuardianState, event: GuardianEvent): GuardianStat
         return beginIncident(state, "stale_stream", now, { msSinceLastValid: event.msSinceLastValid });
       }
       return { ...state, lastEventAt: now };
-
-    case "command_write_failed":
-      if (state.phase === "pre_game" || state.phase === "ended") return { ...state, lastEventAt: now };
-      return beginIncident(state, "command_write_failed", now);
 
     case "unexpected_disconnect":
     case "read_loop_failure":

@@ -66,7 +66,10 @@ export type SensorCommand = "center" | "rollRight" | "rollLeft" | "gyroCal";
 const COMMAND_CHAR: Record<SensorCommand, string> = { center: "c", rollRight: "r", rollLeft: "l", gyroCal: "b" };
 
 /** No frame for this long while connected = signal lost. */
-export const STALE_AFTER_MS = 700;
+export const STALE_AFTER_MS = 60_000;
+
+/** Identical MPU6050 readings for this long can mean a stuck sensor — not a player holding still. */
+export const FROZEN_AFTER_MS = 60_000;
 
 /** Debug output: browser console plus the `npm run dev` terminal (via /api/sensor-log). */
 export function sensorLog(message: string) {
@@ -309,7 +312,7 @@ export class SerialSensor {
     const signature = `${Math.round(frame.roll * 10)}:${Math.round(frame.pitch * 10)}:${Math.round(frame.yaw * 10)}:${Math.round(frame.steer * 100)}:${Math.round(frame.move * 100)}`;
     if (signature === this.lastSignature) {
       if (!this.freezeStartedAt) this.freezeStartedAt = frame.t;
-      else if (frame.t - this.freezeStartedAt > 6000) {
+      else if (frame.t - this.freezeStartedAt > FROZEN_AFTER_MS) {
         this.emitReliability("frozen_readings");
         this.freezeStartedAt = frame.t;
       }
@@ -325,8 +328,9 @@ export class SerialSensor {
     const dPitch = Math.abs(frame.pitch - previous.pitch);
     const dYaw = Math.abs(frame.yaw - previous.yaw);
     const dSteer = Math.abs(frame.steer - previous.steer);
-    const dMove = Math.abs(frame.move - previous.move);
-    if (dRoll > 80 || dPitch > 80 || dYaw > 80 || dSteer > 1.35 || dMove > 1.35) {
+    // `move` is cumulative distance on 8-field firmware, so a normal slash
+    // can jump well past 1. That is gameplay, not a sensor failure.
+    if (dRoll > 80 || dPitch > 80 || dYaw > 80 || dSteer > 1.35) {
       this.lastJumpAt = frame.t;
       this.emitReliability("unrealistic_jump");
     }

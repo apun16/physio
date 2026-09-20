@@ -15,6 +15,17 @@ describe("guardian state machine", () => {
     const state = healthy();
     expect(state.phase).toBe("healthy");
     expect(state.failureType).toBeNull();
+    expect(state.greetingActive).toBe(false);
+  });
+
+  it("does not treat a live X/Y sweep as an incident", () => {
+    expect(reduce(healthy(), { type: "unrealistic_jump" }).phase).toBe("healthy");
+  });
+
+  it("treats frozen readings as an incident after the long stillness window", () => {
+    const state = reduce(healthy(), { type: "frozen_readings" });
+    expect(state.phase).toBe("failure_detected");
+    expect(state.failureType).toBe("frozen_readings");
   });
 
   it("creates a stale-stream incident from a previously live session", () => {
