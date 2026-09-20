@@ -18,12 +18,13 @@ export interface SensorFrame {
   yaw: number;
   steer: number;
   /**
-   * Lateral move axis (moveX on the 8-field firmware): displacement from the
-   * calibration point, normalised by the saved range of motion to -1..1.
-   * 0 is the calibration position, so the sign is the direction of travel.
+   * Lateral move axis (moveX on the 8-field firmware). This is a cumulative
+   * distance from the last calibration point, not a bounded -1..1 reading, so
+   * it is passed through unclamped; clamping pinned it at 1 and silently froze
+   * the signal after about one sweep.
    */
   move: number;
-  /** vertical move axis, 8-field firmware only; same -1..1 convention. */
+  /** vertical move axis, 8-field firmware only; cumulative like move. */
   moveY: number | null;
   /** force sensor, normalised 0..1; 8-field firmware only */
   squeeze: number | null;
@@ -71,8 +72,8 @@ export function parseFrame(line: string, t: number): SensorFrame | null {
     pitch,
     yaw,
     steer: clamp1(steer),
-    move: clamp1(move),
-    moveY: parts.length === 8 ? clamp1(moveY) : null,
+    move,
+    moveY: parts.length === 8 ? moveY : null,
     squeeze: parts.length === 8 ? Math.max(0, Math.min(1, normSqueeze(squeeze))) : null,
     rawFsr: parts.length === 8 ? rawFsr : null,
     t

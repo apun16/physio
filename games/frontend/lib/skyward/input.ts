@@ -44,31 +44,29 @@ export const IMU_TUNING = {
   /** A drop faster than this (draw units per second) looses immediately. */
   releaseRate: 1.2,
   /**
-   * Which way the hand has to travel from the reference point to swing the
-   * sword. If a rightward move turns out to read as falling X on your
-   * calibration, change this one word to "left"; the debug log prints a hint
-   * when it sees a big excursion the other way.
+   * Which way a sweep has to go to swing the sword. "either" takes the
+   * magnitude so it fires whichever sign the calibration produces — pin it to
+   * "right" or "left" once the direction is confirmed on real data.
    */
-  slashAxis: "right" as "either" | "right" | "left",
+  slashAxis: "either" as "either" | "right" | "left",
   /**
-   * moveX is displacement from the calibration point, so 0 is where the user
-   * started and the slash fires once they travel this far past it.
+   * moveX is a cumulative distance from the calibration point, not a position
+   * that springs back, so a slash is measured as growth away from a rolling
+   * baseline rather than an absolute value.
    */
   slashAt: 0.25,
-  /** Coming back within this of the reference arms the next slash. */
-  slashRearm: 0.12,
-  /** Hard floor between slashes. */
+  /** Hard floor between slashes; the quiet gate below does the real work. */
   slashCooldown: 0.15,
   /**
-   * Re-zero the device (command 'c') once the hand has *settled* back at the
-   * start, which clears drift without stealing range from the next slash.
-   * Timing matters: sending it on the strike re-zeroes at the far end of the
-   * sweep, and sending it the moment the hand passes back through the centre
-   * eats the margin a small sweep needs. Both made slashes stop registering.
+   * Ask the device to re-zero (command 'c') after each slash so the next sweep
+   * starts from a clean baseline. The baseline is also reset locally, so the
+   * gesture still re-arms if the command does not land.
    */
   resetAfterSlash: true,
-  /** Seconds the hand must sit at the reference before the re-zero is sent. */
-  recentreAfter: 0.5,
+  /** Per-frame change below this counts as the hand having stopped. */
+  settleQuiet: 0.02,
+  /** Seconds of stillness that end a sweep and arm the next one. */
+  rearmQuiet: 0.15,
   /**
    * Shield is off: pitch and the linear X sweep were tripping each other, and a
    * stuck shield also blocks the bow (state.ts apply() ignores BowDraw while
@@ -103,14 +101,15 @@ export class IMUInputProvider implements InputProvider {
   private lastT = 0;
   private peakDraw = 0;
   private lastSqueeze = 0;
+  private baseX = 0;
+  private lastX = 0;
+  private haveBaseX = false;
   // Starts disarmed: the baseline must be taken from a hand at rest, otherwise
   // connecting mid-movement captures a baseline partway through a sweep and
   // swallows the first slash.
   private armed = false;
+  private quietFor = 0;
   private slashCool = 0;
-  private oppositeHint = 0;
-  private homeFor = 0;
-  private recentred = false;
   private drawing = false;
   private shield = false;
   private logT = 0;
@@ -132,10 +131,10 @@ export class IMUInputProvider implements InputProvider {
     this.drawing = false;
     this.peakDraw = 0;
     this.lastSqueeze = 0;
+    this.haveBaseX = false;
     this.armed = false;
+    this.quietFor = 0;
     this.slashCool = 0;
-    this.homeFor = 0;
-    this.recentred = false;
   }
 
   /** Ask the device to re-zero its cumulative distance. */
@@ -161,9 +160,14 @@ export class IMUInputProvider implements InputProvider {
 
     const actions: GameAction[] = [];
     const moveX = frame.move;
-    // The firmware already reports displacement from the calibration point, so
-    // 0 *is* the user's starting position and moveX is the distance past it.
-    const deltaX = moveX;
+    if (!this.haveBaseX) {
+      this.baseX = moveX;
+      this.lastX = moveX;
+      this.haveBaseX = true;
+    }
+    // Growth away from the baseline, because moveX accumulates and never
+    // springs back on its own.
+    const deltaX = moveX - this.baseX;
     const sweep = IMU_TUNING.slashAxis === "right" ? deltaX : IMU_TUNING.slashAxis === "left" ? -deltaX : Math.abs(deltaX);
     const pitch = IMU_TUNING.shieldUseMagnitude ? Math.abs(frame.pitch) : frame.pitch * IMU_TUNING.pitchSign;
     const squeeze = frame.squeeze;
@@ -186,38 +190,28 @@ export class IMUInputProvider implements InputProvider {
     // firing, both the local baseline and the device are re-zeroed so the next
     // sweep is measured from scratch.
     this.slashCool = Math.max(0, this.slashCool - dt);
-    // Time spent sitting at the reference. A sweep only passes through this
-    // band briefly, so only a genuine rest builds it up.
-    if (Math.abs(deltaX) < IMU_TUNING.slashRearm) {
-      this.homeFor += dt;
-      if (!this.recentred && this.homeFor >= IMU_TUNING.recentreAfter) {
-        this.recentred = true;
-        this.recentre();
-      }
-    } else {
-      this.homeFor = 0;
-      this.recentred = false;
-    }
-
+    const step = Math.abs(moveX - this.lastX);
+    this.lastX = moveX;
     if (!this.armed) {
-      // Re-arms as soon as the hand is back at the starting position.
-      if (Math.abs(deltaX) < IMU_TUNING.slashRearm) this.armed = true;
+      // One slash per sweep: the hand has to come to rest before the next one
+      // arms. Holding the baseline at the live value meanwhile absorbs the
+      // jump back to zero when the device acts on the 'c'.
+      this.baseX = moveX;
+      this.quietFor = step < IMU_TUNING.settleQuiet ? this.quietFor + dt : 0;
+      if (this.quietFor >= IMU_TUNING.rearmQuiet) {
+        this.armed = true;
+        this.quietFor = 0;
+      }
     } else if (this.slashCool <= 0 && sweep >= IMU_TUNING.slashAt) {
       const reach = Math.min(1, (sweep - IMU_TUNING.slashAt) / Math.max(0.01, 1 - IMU_TUNING.slashAt));
       actions.push({ type: "SwordSlash", direction: "horizontal", velocity: 0.55 + reach * 0.45 });
-      sensorLog(`zelda SLASH moved ${deltaX >= 0 ? "+" : ""}${deltaX.toFixed(2)} past the reference`);
+      sensorLog(`zelda SLASH (X=${moveX.toFixed(2)} base=${this.baseX.toFixed(2)} sweep=${sweep.toFixed(2)}) -> recentre`);
       this.slashCool = IMU_TUNING.slashCooldown;
       this.armed = false;
-    } else if (IMU_TUNING.slashAxis !== "either" && -sweep >= IMU_TUNING.slashAt && this.oppositeHint <= 0) {
-      // Travelled well past the reference the other way: most likely the sign
-      // convention is flipped for this calibration.
-      this.oppositeHint = 3;
-      sensorLog(
-        `zelda HINT moved ${deltaX.toFixed(2)} (opposite of slashAxis="${IMU_TUNING.slashAxis}").` +
-          ` If that was your slash, set IMU_TUNING.slashAxis = "${IMU_TUNING.slashAxis === "right" ? "left" : "right"}".`
-      );
+      this.quietFor = 0;
+      this.baseX = moveX;
+      this.recentre();
     }
-    this.oppositeHint = Math.max(0, this.oppositeHint - dt);
 
     // Bow: squeeze draws, easing off looses.
     if (squeeze !== null) {
@@ -266,8 +260,8 @@ export class IMUInputProvider implements InputProvider {
             ` | X=${moveX.toFixed(2)} Y=${(frame.moveY ?? 0).toFixed(2)}` +
             ` | FSR=${frame.rawFsr ?? "-"} squeeze=${squeeze === null ? "-" : squeeze.toFixed(3)}` +
             `(${squeeze === null ? "-" : Math.round(squeeze * 255)}/255)` +
-            ` || moved=${deltaX >= 0 ? "+" : ""}${deltaX.toFixed(2)} sweep=${sweep.toFixed(2)}/${IMU_TUNING.slashAt}` +
-            `${this.armed ? " ready" : " return to centre to re-arm"}${this.recentred ? " (rezeroed)" : ""}` +
+            ` || baseX=${this.baseX.toFixed(2)} sweep=${sweep.toFixed(2)}/${IMU_TUNING.slashAt}` +
+            `${this.armed ? " ready" : ` sweeping(quiet ${this.quietFor.toFixed(2)}s)`}` +
             ` pitch=${pitch.toFixed(1)} shield=${IMU_TUNING.shieldEnabled ? String(this.shield) : "off"}` +
             ` draw=${this.drawing ? this.peakDraw.toFixed(2) : "-"}`
         );
