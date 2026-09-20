@@ -1,7 +1,9 @@
 import { ENCOUNTERS, type EnemySpec, type Encounter, zoneAt } from "./encounters";
 import { VALID_SLASHES, type GameAction, type SlashDirection } from "./input";
 
-export const WALK_SPEED = 150;
+// Travel pace is slowed alongside the combat pacing in encounters.ts so the
+// walk between encounters is not the rushed part of the session.
+export const WALK_SPEED = 105;
 export const SLASH_REACH = 280;
 export const ARROW_SPEED = 520;
 export const MAX_ARROWS = 10;

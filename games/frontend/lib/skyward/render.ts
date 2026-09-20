@@ -402,7 +402,7 @@ function drawHud(
   const name = zone.name.toUpperCase();
   ctx.fillText(name, WIDTH - ctx.measureText(name).width - 24, 32);
   if (debug) {
-    const label = "DEBUG  J/K/L slash   F shield   E bow";
+    const label = "SQUEEZE+RELEASE bow   SWEEP RIGHT slash   RAISE PITCH shield";
     setFont(ctx, 16);
     const w = ctx.measureText(label).width;
     ctx.fillStyle = "#f0c44a";

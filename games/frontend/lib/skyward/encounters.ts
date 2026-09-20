@@ -36,7 +36,21 @@ export type Encounter = {
   line: string;
 };
 
-export const GOBLIN: EnemySpec = {
+/**
+ * Pacing dial for the session: >1 gives the patient more time. Telegraphs run
+ * longer, attacks come round less often and enemies close in more slowly, so a
+ * full squeeze-and-release or a shoulder raise fits inside one attack cycle.
+ */
+export const PACE = 1.6;
+
+const paced = (spec: EnemySpec): EnemySpec => ({
+  ...spec,
+  attackPeriod: Math.round(spec.attackPeriod * PACE * 100) / 100,
+  telegraph: Math.round(spec.telegraph * PACE * 100) / 100,
+  moveSpeed: Math.round(spec.moveSpeed / PACE)
+});
+
+export const GOBLIN: EnemySpec = paced({
   kind: "goblin",
   title: "Forest Scamp",
   maxHp: 2,
@@ -45,9 +59,9 @@ export const GOBLIN: EnemySpec = {
   telegraph: 1.1,
   moveSpeed: 55,
   preferredGap: 150
-};
+});
 
-export const SHIELD_BEAST: EnemySpec = {
+export const SHIELD_BEAST: EnemySpec = paced({
   kind: "shield_beast",
   title: "Oakhide Brute",
   maxHp: 3,
@@ -57,9 +71,9 @@ export const SHIELD_BEAST: EnemySpec = {
   moveSpeed: 40,
   preferredGap: 165,
   hasShield: true
-};
+});
 
-export const ARCHER: EnemySpec = {
+export const ARCHER: EnemySpec = paced({
   kind: "archer",
   title: "Hollowbow Scout",
   maxHp: 2,
@@ -69,9 +83,9 @@ export const ARCHER: EnemySpec = {
   moveSpeed: 35,
   preferredGap: 310,
   ranged: true
-};
+});
 
-export const ARMORED: EnemySpec = {
+export const ARMORED: EnemySpec = paced({
   kind: "armored",
   title: "Ashen Knight",
   maxHp: 4,
@@ -81,9 +95,9 @@ export const ARMORED: EnemySpec = {
   moveSpeed: 70,
   preferredGap: 155,
   armored: true
-};
+});
 
-export const ELITE: EnemySpec = {
+export const ELITE: EnemySpec = paced({
   kind: "elite",
   title: "Crimson Captain",
   maxHp: 5,
@@ -95,9 +109,9 @@ export const ELITE: EnemySpec = {
   hasShield: true,
   ranged: true,
   elite: true
-};
+});
 
-export const BOSS: EnemySpec = {
+export const BOSS: EnemySpec = paced({
   kind: "boss",
   title: "Horned Warlord",
   maxHp: 8,
@@ -110,7 +124,7 @@ export const BOSS: EnemySpec = {
   ranged: true,
   armored: true,
   boss: true
-};
+});
 
 export const ZONES: Zone[] = [
   { id: "forest", name: "Hyrule Fringe", start: 0, end: 1900, skyTop: [110, 186, 230], skyBot: [255, 232, 150], grass: [62, 140, 58], bgSet: "normal", ground: "grass", line: "* The woods open. I will keep walking. You keep me armed." },

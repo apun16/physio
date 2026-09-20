@@ -1,3 +1,5 @@
+import type { SerialSensor } from "../racing/sensor";
+
 export type SlashDirection = "horizontal" | "vertical" | "diagonal";
 
 export const VALID_SLASHES: SlashDirection[] = ["horizontal", "vertical", "diagonal"];
@@ -19,10 +21,120 @@ export class IdleInputProvider implements InputProvider {
   }
 }
 
-/** Later: parse IMU packets into the same GameAction types. */
+/**
+ * Gesture thresholds for the hardware controller. All are deliberately generous
+ * so a slow, deliberate rehab movement still registers.
+ */
+export const IMU_TUNING = {
+  /** Squeeze (0..1) above this counts as drawing the bow. */
+  drawMin: 0.18,
+  /** Easing off this far below the peak squeeze looses the arrow. */
+  releaseDrop: 0.12,
+  /** Pitch in degrees above neutral that raises the shield... */
+  shieldUp: 14,
+  /** ...and the lower edge it has to fall back through to drop it (hysteresis). */
+  shieldDown: 8,
+  /** Rightward move-X rate, units per second, that counts as a slash. */
+  slashRate: 1.4,
+  /** Minimum gap between slashes, seconds. */
+  slashCooldown: 0.45
+};
+
+/**
+ * Maps the ESP-32 controller onto the three combat gestures:
+ *   bow    — squeeze to draw, ease off to loose the arrow
+ *   slash  — a linear move of the hand to the right
+ *   shield — raising the pitch angle, held while it stays raised
+ *
+ * Needs the 8-field firmware (htn_final.ino) for the force sensor; on the
+ * 5-field sketch the bow stays idle and only slash and shield work.
+ */
 export class IMUInputProvider implements InputProvider {
+  private lastT = 0;
+  private lastMoveX = 0;
+  private peakDraw = 0;
+  private drawing = false;
+  private shield = false;
+  private slashCool = 0;
+  private started = false;
+
+  constructor(private sensor: SerialSensor) {}
+
+  /** True once a fresh frame has been seen; drives the "controller live" readout. */
+  get live() {
+    return this.sensor.isLive(performance.now());
+  }
+
+  private reset() {
+    this.started = false;
+    this.drawing = false;
+    this.peakDraw = 0;
+    this.slashCool = 0;
+  }
+
   poll(): GameAction[] {
-    return [];
+    const now = performance.now();
+    if (!this.sensor.isLive(now)) {
+      // Drop the shield rather than leave it stuck up on a dead controller.
+      if (this.shield) {
+        this.shield = false;
+        this.reset();
+        return [{ type: "ShieldState", active: false }];
+      }
+      this.reset();
+      return [];
+    }
+    const frame = this.sensor.latest;
+    if (!frame || frame.t === this.lastT) return [];
+    const dt = this.started ? Math.max(0.001, (frame.t - this.lastT) / 1000) : 0;
+    this.lastT = frame.t;
+
+    const actions: GameAction[] = [];
+    this.slashCool = Math.max(0, this.slashCool - dt);
+
+    // Shield: pitch angle rising, with hysteresis so it does not flicker.
+    const raised = this.shield ? frame.pitch > IMU_TUNING.shieldDown : frame.pitch > IMU_TUNING.shieldUp;
+    if (raised !== this.shield) {
+      this.shield = raised;
+      actions.push({ type: "ShieldState", active: raised });
+    }
+
+    // Slash: a rightward linear move of the hand.
+    if (this.started && this.slashCool <= 0) {
+      const rate = (frame.move - this.lastMoveX) / dt;
+      if (rate >= IMU_TUNING.slashRate) {
+        this.slashCool = IMU_TUNING.slashCooldown;
+        actions.push({
+          type: "SwordSlash",
+          direction: "horizontal",
+          // A just-threshold sweep lands on STRONG_HIT; faster scales to full.
+          velocity: Math.min(1, 0.5 + (rate - IMU_TUNING.slashRate) / (IMU_TUNING.slashRate * 2))
+        });
+      }
+    }
+    this.lastMoveX = frame.move;
+
+    // Bow: squeeze draws, easing off looses.
+    const squeeze = frame.squeeze;
+    if (squeeze !== null) {
+      const eased = this.drawing && this.peakDraw - squeeze >= IMU_TUNING.releaseDrop;
+      if (this.drawing && (squeeze < IMU_TUNING.drawMin || eased)) {
+        this.drawing = false;
+        this.peakDraw = 0;
+        actions.push({ type: "BowRelease" });
+        actions.push({ type: "BowDraw", amount: 0 });
+      } else if (squeeze >= IMU_TUNING.drawMin) {
+        this.drawing = true;
+        this.peakDraw = Math.max(this.peakDraw, squeeze);
+        actions.push({ type: "BowDraw", amount: squeeze });
+      }
+    }
+
+    // Aim rides the vertical move axis; the other axes are spoken for.
+    actions.push({ type: "BowAim", x: 1, y: Math.max(-1, Math.min(1, frame.moveY ?? 0)) });
+
+    this.started = true;
+    return actions;
   }
 }
 
