@@ -44,7 +44,7 @@ export const GameSpecSchema = z
     version: z.literal(1),
     sessionId: z.string(),
     title: z.string(),
-    template: z.enum(["arc_runner", "fruit_catcher", "sit_shapes"]),
+    template: z.enum(["arc_runner", "fruit_catcher"]),
     exercise: z.object({
       bodyPart: z.string(),
       side: z.enum(["left", "right", "bilateral", "not_applicable"]),
@@ -61,8 +61,7 @@ export const GameSpecSchema = z
       metric: z.enum([
         "shoulder_flexion",
         "shoulder_reach",
-        "hand_closure",
-        "seated_leg_lift"
+        "hand_closure"
       ]),
       confidenceThreshold: z.number().min(0.5).max(0.95),
       hardwareGripPreferred: z.boolean(),

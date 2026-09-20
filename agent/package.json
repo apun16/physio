@@ -17,6 +17,7 @@
     "types": "wrangler types env.d.ts",
     "format": "oxfmt --write .",
     "lint": "oxlint src/",
+    "test": "npm test --prefix .. -- agent/src/therapy-compile.test.ts",
     "check": "oxfmt --check src/ wrangler.jsonc && oxlint src/ && tsc"
   },
   "dependencies": {

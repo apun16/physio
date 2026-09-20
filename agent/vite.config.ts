@@ -5,5 +5,10 @@ import { defineConfig } from "vite";
 import agents from "agents/vite";
 
 export default defineConfig({
-  plugins: [agents(), react(), cloudflare(), tailwindcss()]
+  plugins: [agents(), react(), cloudflare(), tailwindcss()],
+  server: {
+    host: "127.0.0.1",
+    port: 5173,
+    strictPort: false
+  }
 });
