@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -9,15 +9,12 @@ import {
   ArrowRight,
   Camera,
   Check,
-  FileImage,
   FileText,
   LoaderCircle,
   LockKeyhole,
   ShieldCheck,
-  Sparkles,
-  Upload
+  Sparkles
 } from "lucide-react";
-import { extractTherapyNote } from "../../lib/therapy/extract";
 import { therapyNoteFixtures } from "../../lib/therapy/fixtures";
 import { AgentStepSchema, ExercisePlanSchema, GameSpecSchema, type AgentStep, type ExercisePlan, type GameSpec } from "../../lib/therapy/schemas";
 import styles from "./therapy.module.css";
@@ -46,7 +43,6 @@ function displayValue(value: unknown, key: keyof ExercisePlan) {
 
 export default function TherapyCompiler() {
   const router = useRouter();
-  const fileInput = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
   const [source, setSource] = useState({ fileName: "pasted-note.txt", mimeType: "text/plain", note: "Pasted by patient" });
   const [stage, setStage] = useState<"intake" | "working" | "review">("intake");
@@ -54,22 +50,6 @@ export default function TherapyCompiler() {
   const [result, setResult] = useState<Result | null>(null);
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState("");
-  const [dragging, setDragging] = useState(false);
-
-  async function readFile(file: File) {
-    setError("");
-    setStage("working");
-    setSource({ fileName: file.name, mimeType: file.type || "application/octet-stream", note: "Uploaded therapy note" });
-    try {
-      const extracted = await extractTherapyNote(file, setProgress);
-      if (!extracted.trim()) throw new Error("No readable text was found in this note.");
-      setText(extracted);
-      await compile(extracted, { fileName: file.name, mimeType: file.type, note: "Uploaded therapy note" });
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not read this note.");
-      setStage("intake");
-    }
-  }
 
   async function compile(noteText = text, metadata = source, sessionId?: string) {
     if (!noteText.trim()) {
@@ -142,36 +122,25 @@ export default function TherapyCompiler() {
       <section className={styles.hero}>
         <span>ROX // PATIENT MODE</span>
         <h1>TURN YOUR THERAPY NOTE<br /><b>INTO A GAME</b></h1>
-        <p>Upload the instructions from your therapist. Rox will organize them, ask about anything unclear, and build a camera-controlled game without changing your treatment.</p>
+        <p>Upload the instructions from your therapist. We will organize them, ask about anything unclear, and build a camera-controlled game without changing your treatment.</p>
       </section>
 
       {stage === "intake" && (
         <section className={styles.compiler}>
           <div className={styles.intake}>
             <div className={styles.sectionTitle}><span>01</span><div><small>ADD INSTRUCTIONS</small><h2>Your therapy note</h2></div></div>
-            <button
-              className={`${styles.dropzone} ${dragging ? styles.dragging : ""}`}
-              onClick={() => fileInput.current?.click()}
-              onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={(event) => { event.preventDefault(); setDragging(false); const file = event.dataTransfer.files[0]; if (file) void readFile(file); }}
-            >
-              <Upload size={27} />
-              <b>Drop a PDF or photo here</b>
-              <span>or choose a file · PDF, JPG, PNG, TXT</span>
-            </button>
-            <input ref={fileInput} type="file" accept=".pdf,.txt,.md,image/*" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void readFile(file); }} />
-            <div className={styles.or}><i />OR PASTE TEXT<i /></div>
-            <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="Example: Right shoulder flexion, 2 sets of 8..." />
-            <button className={styles.primary} onClick={() => void compile()}>CHECK MY NOTE <ArrowRight size={15} /></button>
+            <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="Right shoulder flexion. 2 sets of 8. Avoid trunk lean. No overhead reaching." />
+            <button type="button" className={styles.primary} onClick={() => void compile()}>CHECK MY NOTE <ArrowRight size={15} /></button>
             {error && <p className={styles.error}><AlertTriangle size={15} />{error}</p>}
+            <div className={styles.or}><i />OR UPLOAD A FILE LATER<i /></div>
+            <p className={styles.uploadHint}>Paste the therapist note first. PDF and photo upload can be added after this compiler path is working.</p>
           </div>
 
           <aside className={styles.demo}>
             <div className={styles.sectionTitle}><span>DEMO</span><div><small>SYNTHETIC NOTES</small><h2>Try an example</h2></div></div>
             {therapyNoteFixtures.map((fixture, index) => (
               <button key={fixture.id} onClick={() => useFixture(index)}>
-                {index === 1 ? <FileImage size={18} /> : <FileText size={18} />}
+                <FileText size={18} />
                 <span><b>{fixture.label}</b><small>{fixture.text}</small></span>
                 <ArrowRight size={14} />
               </button>
@@ -201,7 +170,7 @@ export default function TherapyCompiler() {
             <div className={styles.trace}>
               <div>
                 <span>AGENT TRACE</span>
-                <b>{result.provider ?? "rox-tool-loop"} · {result.sessionId.slice(0, 8)}</b>
+                <b>{result.provider ?? "local-safe-demo"} · {result.sessionId.slice(0, 8)}</b>
               </div>
               <ol>
                 {result.steps.map((step, index) => (
@@ -243,8 +212,16 @@ export default function TherapyCompiler() {
 
           {result.gameSpec && (
             <div className={styles.gameReady}>
-              <div><Sparkles size={22} /><span><small>SELECTED TEMPLATE</small><b>{result.gameSpec.title}</b><p>{result.gameSpec.tracking.webcamMeasurementLabel}</p></span></div>
-              <button onClick={launchGame}>CREATE MY GAME <Camera size={16} /></button>
+              <div>
+                <Sparkles size={22} />
+                <span>
+                  <small>GENERATED GAME PLAN</small>
+                  <b>{result.gameSpec.title}</b>
+                  <p>{result.gameSpec.template.replaceAll("_", " ")} · {result.gameSpec.tracking.webcamMeasurementLabel}</p>
+                  <p>{result.gameSpec.gameplay.targetCount} targets · {result.gameSpec.exercise.repetitions} reps × {result.gameSpec.exercise.sets} sets · confidence floor {Math.round(result.gameSpec.tracking.confidenceThreshold * 100)}%</p>
+                </span>
+              </div>
+              <button type="button" onClick={launchGame}>CREATE MY GAME <Camera size={16} /></button>
             </div>
           )}
         </section>
