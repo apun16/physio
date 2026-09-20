@@ -2,24 +2,25 @@ import {
   DEFERRED_FAILURES,
   INCIDENT_PHASES,
   INITIAL_GUARDIAN_STATE,
-  MALFORMED_THRESHOLD,
-  MALFORMED_WINDOW_MS,
   newIncidentId,
   type FailureType,
   type GuardianEvent,
-  type GuardianPhase,
   type GuardianState,
   type PromptKind
 } from "./types";
-
-const LIVE_PHASES: ReadonlySet<GuardianPhase> = new Set(["connecting", "healthy", "degraded"]);
 
 function at(event: GuardianEvent, fallback: number) {
   return "at" in event && typeof event.at === "number" ? event.at : fallback;
 }
 
 function promptFor(failureType: FailureType): PromptKind {
-  if (failureType === "unexpected_disconnect" || failureType === "read_loop_failure") return "intentional_disconnect";
+  if (
+    failureType === "unexpected_disconnect" ||
+    failureType === "read_loop_failure" ||
+    failureType === "stale_stream"
+  ) {
+    return "intentional_disconnect";
+  }
   if (failureType === "frozen_readings") return "stillness";
   return "diagnosis";
 }
@@ -29,12 +30,12 @@ function beginIncident(state: GuardianState, failureType: FailureType, now: numb
   if (INCIDENT_PHASES.has(state.phase) && state.failureType === failureType) {
     return { ...state, lastEventAt: now, ...extra };
   }
-  if (INCIDENT_PHASES.has(state.phase) && (failureType === "unexpected_disconnect" || failureType === "read_loop_failure")) {
+  if (INCIDENT_PHASES.has(state.phase) && (failureType === "unexpected_disconnect" || failureType === "read_loop_failure" || failureType === "stale_stream")) {
     return {
       ...state,
       failureType,
       promptKind: "intentional_disconnect",
-      sentryDeferred: true,
+      sentryDeferred: false,
       greetingActive: false,
       lastEventAt: now,
       ...extra
@@ -62,16 +63,43 @@ function clearBadPackets(): Pick<GuardianState, "malformedCount" | "malformedWin
   return { malformedCount: 0, malformedWindowStart: null, invalidCount: 0, invalidWindowStart: null };
 }
 
-function countWindow(start: number | null, count: number, now: number) {
-  const windowStart = start ?? now;
-  const nextCount = now - windowStart > MALFORMED_WINDOW_MS ? 1 : count + 1;
-  return { windowStart: nextCount === 1 ? now : windowStart, count: nextCount };
+function recoverIfStreamReturned(state: GuardianState, now: number): GuardianState | null {
+  if (state.phase !== "failure_detected" && state.phase !== "awaiting_user") return null;
+  if (
+    state.failureType !== "stale_stream" &&
+    state.failureType !== "persistent_malformed" &&
+    state.failureType !== "invalid_values"
+  ) {
+    return null;
+  }
+  return {
+    ...state,
+    phase: "healthy",
+    failureType: null,
+    incidentId: null,
+    recoveryMethod: null,
+    recoveryResult: null,
+    promptKind: "none",
+    sentryDeferred: false,
+    greetingActive: false,
+    lastEventAt: now,
+    ...clearBadPackets()
+  };
 }
 
 /** Deterministic Guardian reducer. Safe to unit-test without the DOM or Sentry. */
 export function reduce(state: GuardianState, event: GuardianEvent): GuardianState {
   const now = at(event, state.lastEventAt);
-  if (state.phase === "ended" && event.type !== "session_start") return state;
+  if (
+    state.phase === "ended" &&
+    event.type !== "session_start" &&
+    event.type !== "unexpected_disconnect" &&
+    event.type !== "read_loop_failure" &&
+    event.type !== "stream_stale" &&
+    event.type !== "imu_unplugged"
+  ) {
+    return state;
+  }
 
   switch (event.type) {
     case "session_start":
@@ -83,6 +111,7 @@ export function reduce(state: GuardianState, event: GuardianEvent): GuardianStat
     case "set_source":
       return { ...state, source: event.source, lastEventAt: now };
     case "session_end":
+      if (INCIDENT_PHASES.has(state.phase)) return { ...state, lastEventAt: now };
       return { ...state, phase: "ended", greetingActive: false, promptKind: "none", lastEventAt: now };
 
     case "port_picker_cancelled":
@@ -115,10 +144,13 @@ export function reduce(state: GuardianState, event: GuardianEvent): GuardianStat
     case "unrealistic_jump":
     case "command_ack_timeout":
     case "command_write_failed":
-      return { ...state, lastEventAt: now };
     case "frozen_readings":
-      if (!LIVE_PHASES.has(state.phase)) return { ...state, lastEventAt: now };
-      return beginIncident(state, "frozen_readings", now);
+      // Demo-safe: never overlay for noisy MPU6050 play or a player holding still.
+      return { ...state, lastEventAt: now };
+    case "stream_stale":
+      // Packets fully stopped while Chrome still says connected (typical BT drop).
+      if (state.inputMode === "hand") return { ...state, lastEventAt: now };
+      return beginIncident(state, "stale_stream", now, { msSinceLastValid: event.msSinceLastValid });
     case "fallback_failed":
       return beginIncident(state, "fallback_failed", now);
 
@@ -137,7 +169,9 @@ export function reduce(state: GuardianState, event: GuardianEvent): GuardianStat
       }
       return { ...state, lastEventAt: now };
 
-    case "first_valid_frame":
+    case "first_valid_frame": {
+      const resumed = recoverIfStreamReturned(state, now);
+      if (resumed) return resumed;
       if (state.phase === "recovering") {
         return {
           ...state,
@@ -156,43 +190,17 @@ export function reduce(state: GuardianState, event: GuardianEvent): GuardianStat
         return { ...state, phase: "healthy", greetingActive: false, lastEventAt: now, ...clearBadPackets() };
       }
       return { ...state, lastEventAt: now };
-
-    case "malformed_frame": {
-      if (state.inputMode === "hand") return { ...state, lastEventAt: now };
-      if (!LIVE_PHASES.has(state.phase) && state.phase !== "recovering") return { ...state, lastEventAt: now };
-      const window = countWindow(state.malformedWindowStart, state.malformedCount, now);
-      const next: GuardianState = { ...state, malformedCount: window.count, malformedWindowStart: window.windowStart, lastEventAt: now };
-      if (window.count >= MALFORMED_THRESHOLD) return beginIncident(next, "persistent_malformed", now);
-      if (state.phase === "healthy") return { ...next, phase: "degraded" };
-      return next;
     }
 
-    case "invalid_values": {
-      if (state.inputMode === "hand") return { ...state, lastEventAt: now };
-      if (!LIVE_PHASES.has(state.phase) && state.phase !== "recovering") return { ...state, lastEventAt: now };
-      const window = countWindow(state.invalidWindowStart, state.invalidCount, now);
-      const next: GuardianState = { ...state, invalidCount: window.count, invalidWindowStart: window.windowStart, lastEventAt: now };
-      if (window.count >= MALFORMED_THRESHOLD) return beginIncident(next, "invalid_values", now);
-      if (state.phase === "healthy") return { ...next, phase: "degraded" };
-      return next;
-    }
-
-    case "stream_stale":
-      if (state.inputMode === "hand") return { ...state, lastEventAt: now };
-      if (state.phase === "pre_game" || state.phase === "ended") return { ...state, lastEventAt: now };
-      if (INCIDENT_PHASES.has(state.phase) && state.failureType === "stale_stream") {
-        return { ...state, msSinceLastValid: event.msSinceLastValid, lastEventAt: now };
-      }
-      if (LIVE_PHASES.has(state.phase) || state.phase === "recovering") {
-        return beginIncident(state, "stale_stream", now, { msSinceLastValid: event.msSinceLastValid });
-      }
+    case "malformed_frame":
+    case "invalid_values":
       return { ...state, lastEventAt: now };
 
     case "unexpected_disconnect":
     case "read_loop_failure":
+    case "imu_unplugged":
       if (state.inputMode === "hand") return { ...state, lastEventAt: now };
-      if (state.phase === "pre_game" || state.phase === "ended") return { ...state, lastEventAt: now };
-      return beginIncident(state, event.type, now);
+      return beginIncident(state, event.type === "imu_unplugged" ? "unexpected_disconnect" : event.type, now);
 
     case "prompt_user":
       if (state.phase === "failure_detected") return { ...state, phase: "awaiting_user", lastEventAt: now };
@@ -260,7 +268,9 @@ export function reduce(state: GuardianState, event: GuardianEvent): GuardianStat
       }
       return state;
 
-    case "frames_stable":
+    case "frames_stable": {
+      const resumed = recoverIfStreamReturned(state, now);
+      if (resumed) return resumed;
       if (state.phase === "degraded") {
         return { ...state, phase: "healthy", lastEventAt: now, ...clearBadPackets() };
       }
@@ -275,6 +285,7 @@ export function reduce(state: GuardianState, event: GuardianEvent): GuardianStat
         };
       }
       return { ...state, lastEventAt: now };
+    }
 
     case "recovery_unresolved":
       if (state.phase === "recovering" || state.phase === "awaiting_user" || state.phase === "fallback_active") {

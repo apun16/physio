@@ -5,6 +5,7 @@ export default defineConfig({
     environment: "jsdom",
     include: [
       "lib/rehab-guardian/**/*.test.ts",
+      "lib/racing/**/*.test.ts",
       "components/sentry-sidekick/**/*.test.ts",
       "components/sentry-sidekick/**/*.test.tsx"
     ]

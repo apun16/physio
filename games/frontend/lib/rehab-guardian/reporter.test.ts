@@ -68,6 +68,12 @@ describe("sentry reporter", () => {
     expect(String(sentry.captureMessage.mock.calls[0][0])).not.toMatch(/\d+\.\d+,\d+\.\d+/);
   });
 
+  it("does not drop an incident id that happens to contain a forbidden substring", () => {
+    const payload = sanitizeIncident({ ...incident, incidentId: "rg_move_name_1" }, "development");
+    expect(payload).toBeTruthy();
+    expect(() => assertSanitized(payload!)).not.toThrow();
+  });
+
   it("tags Zelda incidents as skyward", () => {
     const payload = sanitizeIncident(incident, "test", "skyward");
     expect(payload!.game).toBe("skyward");

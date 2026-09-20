@@ -35,13 +35,12 @@ describe("Sentry Sidekick", () => {
     });
   });
 
-  it("appears after a real Guardian failure event", async () => {
+  it("appears after a surprise disconnect", async () => {
     let state = reduce(reduce(createGuardian(), { type: "connecting" }), { type: "first_valid_frame" });
-    state = reduce(state, { type: "stream_stale", msSinceLastValid: 900 });
+    state = reduce(state, { type: "unexpected_disconnect" });
     state = reduce(state, { type: "prompt_user" });
     renderSidekick(state, false);
     expect(await screen.findByRole("dialog", { name: /beety the bug/i })).toBeTruthy();
-    expect(screen.getByText(/hi i'm beety the bug here to help!/i)).toBeTruthy();
-    expect(screen.getByText(/no valid IMU frame arrived/i)).toBeTruthy();
+    expect(screen.getByText(/did you disconnect the sensor intentionally/i)).toBeTruthy();
   });
 });

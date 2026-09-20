@@ -58,6 +58,7 @@ export type SensorReliabilityKind =
   | "malformed_frame"
   | "invalid_values"
   | "frozen_readings"
+  | "imu_unplugged"
   | "unrealistic_jump"
   | "command_write_failed"
   | "command_sent"
@@ -86,6 +87,7 @@ export type GuardianEvent =
   | { type: "malformed_frame"; at?: number }
   | { type: "invalid_values"; at?: number }
   | { type: "frozen_readings"; at?: number }
+  | { type: "imu_unplugged"; at?: number }
   | { type: "unrealistic_jump"; at?: number }
   | { type: "stream_stale"; msSinceLastValid: number; at?: number }
   | { type: "port_open_failed"; at?: number }
@@ -185,7 +187,5 @@ export const INCIDENT_PHASES: ReadonlySet<GuardianPhase> = new Set([
 ]);
 
 export const DEFERRED_FAILURES: ReadonlySet<FailureType> = new Set([
-  "unexpected_disconnect",
-  "read_loop_failure",
   "frozen_readings"
 ]);
