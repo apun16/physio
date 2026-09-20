@@ -108,7 +108,7 @@ export default function RehabGuardianHost({ sensor, inputMode, running, game = "
   };
 
   const onIntent = (intentional: boolean) => {
-    if (!intentional) setPayload(reportFailure({ ...state, sentryDeferred: false }, game));
+    if (!intentional) setPayload(reportFailure({ ...state, sentryDeferred: false }, game, { force: true }));
     dispatch({ type: "user_intent", intentional });
   };
 

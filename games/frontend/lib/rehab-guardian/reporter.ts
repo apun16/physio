@@ -24,25 +24,48 @@ function applyTags(scope: GuardianScope, payload: SanitizedIncident) {
   for (const [tag, value] of Object.entries(tags(payload))) scope.setTag(tag, value);
 }
 
-function sendException(message: string, payload: SanitizedIncident, fingerprint: string[]) {
+function sendException(message: string, payload: SanitizedIncident, fingerprint: string[]): boolean {
   const sentry = sentrySdk();
-  if (typeof sentry.captureException !== "function") {
-    console.warn("[rehab-guardian] Sentry.captureException is not available; IMU incident not sent:", message);
-    return;
+  const captureEx = sentry.captureException;
+  const captureMsg = sentry.captureMessage;
+  if (typeof captureEx !== "function" && typeof captureMsg !== "function") {
+    console.warn("[rehab-guardian] Sentry capture is not available; IMU incident not sent:", message);
+    return false;
   }
   const error = new Error(message);
-  const capture = () => sentry.captureException?.(error);
-  if (typeof sentry.withScope === "function") {
-    sentry.withScope((scope) => {
-      applyTags(scope, payload);
-      scope.setFingerprint(fingerprint);
-      scope.setContext("rehab_guardian", payload);
+  const capture = () => {
+    if (typeof captureEx === "function") return captureEx(error);
+    return captureMsg?.(message, "error");
+  };
+  const decorate = (scope: GuardianScope) => {
+    applyTags(scope, payload);
+    scope.setFingerprint(fingerprint);
+    scope.setContext("rehab_guardian", payload);
+  };
+  try {
+    if (typeof sentry.withScope === "function") {
+      sentry.withScope((scope) => {
+        try {
+          decorate(scope);
+        } catch {
+          // still capture the exception
+        }
+        capture();
+      });
+    } else {
       capture();
-    });
-  } else {
-    capture();
+    }
+    console.info("[rehab-guardian] sent to Sentry:", message);
+    return true;
+  } catch (err) {
+    console.warn("[rehab-guardian] Sentry send failed:", err);
+    try {
+      captureMsg?.(message, "error");
+      return true;
+    } catch {
+      return false;
+    }
   }
-  console.info("[rehab-guardian] sent to Sentry:", message);
 }
 
 function sendMessage(message: string, payload: SanitizedIncident, level: "info" | "warning") {
@@ -92,7 +115,7 @@ function endNamedSpan(name: string) {
   }
 }
 
-export function reportFailure(state: GuardianState, game: GuardianGame = "racing") {
+export function reportFailure(state: GuardianState, game: GuardianGame = "racing", opts: { force?: boolean } = {}) {
   const payload = sanitizeIncident(state, process.env.NODE_ENV ?? "development", game);
   if (!payload) return null;
   try {
@@ -104,20 +127,26 @@ export function reportFailure(state: GuardianState, game: GuardianGame = "racing
   const key = `${payload.failureType}:${payload.source}`;
   const now = Date.now();
   const last = lastFailureAt.get(key) ?? 0;
-  if (reportedIncidents.has(payload.incidentId) || now - last < RATE_MS && lastFailureAt.has(key)) {
+  if (!opts.force && (reportedIncidents.has(payload.incidentId) || (now - last < RATE_MS && lastFailureAt.has(key)))) {
     lastFailureAt.set(key, now);
     return payload;
   }
+
+  const sent = sendException(`Rehab Guardian: ${payload.failureType}`, payload, ["rehab-guardian", payload.failureType]);
+  if (!sent) return payload;
+
   lastFailureAt.set(key, now);
   reportedIncidents.add(payload.incidentId);
-
-  sendException(`Rehab Guardian: ${payload.failureType}`, payload, ["rehab-guardian", payload.failureType]);
   const sentry = sentrySdk();
   if (typeof sentry.setMeasurement === "function") {
-    if (typeof payload.msSinceLastValid === "number") {
-      sentry.setMeasurement("imu.ms_since_last_valid", payload.msSinceLastValid, "millisecond");
+    try {
+      if (typeof payload.msSinceLastValid === "number") {
+        sentry.setMeasurement("imu.ms_since_last_valid", payload.msSinceLastValid, "millisecond");
+      }
+      sentry.setMeasurement("imu.malformed_count", payload.malformedCount, "none");
+    } catch {
+      // measurements are optional
     }
-    sentry.setMeasurement("imu.malformed_count", payload.malformedCount, "none");
   }
   startNamedSpan("imu.failure_detected");
   return payload;

@@ -13,7 +13,10 @@ const sentry = vi.hoisted(() => ({
   setMeasurement: vi.fn()
 }));
 
-vi.mock("@sentry/nextjs", () => sentry);
+vi.mock("@sentry/nextjs", () => ({
+  ...sentry,
+  default: sentry
+}));
 
 import { createGuardian } from "./machine";
 import { assertSanitized, sanitizeIncident } from "./privacy";
@@ -82,5 +85,23 @@ describe("sentry reporter", () => {
     assertSanitized(payload!);
     reportFailure(incident, "skyward");
     expect(sentry.captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries if the first capture fails, and No can force a resend", () => {
+    sentry.captureException.mockImplementation(() => {
+      throw new Error("sdk down");
+    });
+    sentry.captureMessage.mockImplementation(() => {
+      throw new Error("msg down");
+    });
+    reportFailure(incident);
+    expect(sentry.captureException).toHaveBeenCalledTimes(1);
+    reportFailure(incident);
+    expect(sentry.captureException).toHaveBeenCalledTimes(2);
+
+    sentry.captureException.mockImplementation(() => "event-id");
+    sentry.captureMessage.mockImplementation(() => undefined);
+    reportFailure(incident, "racing", { force: true });
+    expect(sentry.captureException).toHaveBeenCalledTimes(3);
   });
 });
