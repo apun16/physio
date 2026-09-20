@@ -49,10 +49,24 @@ export const IMU_TUNING = {
    * "right" or "left" once the direction is confirmed on real data.
    */
   slashAxis: "either" as "either" | "right" | "left",
-  /** Sweep value at or beyond this swings the sword. */
+  /**
+   * moveX is a cumulative distance from the calibration point, not a position
+   * that springs back, so a slash is measured as growth away from a rolling
+   * baseline rather than an absolute value.
+   */
   slashAt: 0.25,
-  /** The sweep has to fall back inside this before another slash can fire. */
-  slashRearm: 0.1,
+  /** Hard floor between slashes; the quiet gate below does the real work. */
+  slashCooldown: 0.15,
+  /**
+   * Ask the device to re-zero (command 'c') after each slash so the next sweep
+   * starts from a clean baseline. The baseline is also reset locally, so the
+   * gesture still re-arms if the command does not land.
+   */
+  resetAfterSlash: true,
+  /** Per-frame change below this counts as the hand having stopped. */
+  settleQuiet: 0.02,
+  /** Seconds of stillness that end a sweep and arm the next one. */
+  rearmQuiet: 0.15,
   /**
    * Shield is off: pitch and the linear X sweep were tripping each other, and a
    * stuck shield also blocks the bow (state.ts apply() ignores BowDraw while
@@ -87,9 +101,17 @@ export class IMUInputProvider implements InputProvider {
   private lastT = 0;
   private peakDraw = 0;
   private lastSqueeze = 0;
+  private baseX = 0;
+  private lastX = 0;
+  private haveBaseX = false;
+  // Starts disarmed: the baseline must be taken from a hand at rest, otherwise
+  // connecting mid-movement captures a baseline partway through a sweep and
+  // swallows the first slash.
+  private armed = false;
+  private quietFor = 0;
+  private slashCool = 0;
   private drawing = false;
   private shield = false;
-  private slashArmed = true;
   private logT = 0;
   private started = false;
 
@@ -109,7 +131,15 @@ export class IMUInputProvider implements InputProvider {
     this.drawing = false;
     this.peakDraw = 0;
     this.lastSqueeze = 0;
-    this.slashArmed = true;
+    this.haveBaseX = false;
+    this.armed = false;
+    this.quietFor = 0;
+    this.slashCool = 0;
+  }
+
+  /** Ask the device to re-zero its cumulative distance. */
+  recentre() {
+    if (IMU_TUNING.resetAfterSlash) void this.sensor.send("center");
   }
 
   poll(): GameAction[] {
@@ -130,8 +160,15 @@ export class IMUInputProvider implements InputProvider {
 
     const actions: GameAction[] = [];
     const moveX = frame.move;
-    // Direction-agnostic for now: magnitude unless an axis has been pinned.
-    const sweep = IMU_TUNING.slashAxis === "right" ? moveX : IMU_TUNING.slashAxis === "left" ? -moveX : Math.abs(moveX);
+    if (!this.haveBaseX) {
+      this.baseX = moveX;
+      this.lastX = moveX;
+      this.haveBaseX = true;
+    }
+    // Growth away from the baseline, because moveX accumulates and never
+    // springs back on its own.
+    const deltaX = moveX - this.baseX;
+    const sweep = IMU_TUNING.slashAxis === "right" ? deltaX : IMU_TUNING.slashAxis === "left" ? -deltaX : Math.abs(deltaX);
     const pitch = IMU_TUNING.shieldUseMagnitude ? Math.abs(frame.pitch) : frame.pitch * IMU_TUNING.pitchSign;
     const squeeze = frame.squeeze;
 
@@ -149,15 +186,31 @@ export class IMUInputProvider implements InputProvider {
       actions.push({ type: "ShieldState", active: false });
     }
 
-    // Slash: the linear X value swept to the right. Using the value rather than
-    // its rate means a slow, deliberate rehab sweep still counts; it re-arms
-    // once the hand comes back inside slashRearm.
-    if (!this.slashArmed && sweep < IMU_TUNING.slashRearm) this.slashArmed = true;
-    if (this.slashArmed && sweep >= IMU_TUNING.slashAt) {
-      this.slashArmed = false;
+    // Slash: growth of the cumulative X distance away from its baseline. After
+    // firing, both the local baseline and the device are re-zeroed so the next
+    // sweep is measured from scratch.
+    this.slashCool = Math.max(0, this.slashCool - dt);
+    const step = Math.abs(moveX - this.lastX);
+    this.lastX = moveX;
+    if (!this.armed) {
+      // One slash per sweep: the hand has to come to rest before the next one
+      // arms. Holding the baseline at the live value meanwhile absorbs the
+      // jump back to zero when the device acts on the 'c'.
+      this.baseX = moveX;
+      this.quietFor = step < IMU_TUNING.settleQuiet ? this.quietFor + dt : 0;
+      if (this.quietFor >= IMU_TUNING.rearmQuiet) {
+        this.armed = true;
+        this.quietFor = 0;
+      }
+    } else if (this.slashCool <= 0 && sweep >= IMU_TUNING.slashAt) {
       const reach = Math.min(1, (sweep - IMU_TUNING.slashAt) / Math.max(0.01, 1 - IMU_TUNING.slashAt));
       actions.push({ type: "SwordSlash", direction: "horizontal", velocity: 0.55 + reach * 0.45 });
-      sensorLog(`zelda SLASH (X=${moveX.toFixed(2)} sweep=${sweep.toFixed(2)})`);
+      sensorLog(`zelda SLASH (X=${moveX.toFixed(2)} base=${this.baseX.toFixed(2)} sweep=${sweep.toFixed(2)}) -> recentre`);
+      this.slashCool = IMU_TUNING.slashCooldown;
+      this.armed = false;
+      this.quietFor = 0;
+      this.baseX = moveX;
+      this.recentre();
     }
 
     // Bow: squeeze draws, easing off looses.
@@ -207,7 +260,8 @@ export class IMUInputProvider implements InputProvider {
             ` | X=${moveX.toFixed(2)} Y=${(frame.moveY ?? 0).toFixed(2)}` +
             ` | FSR=${frame.rawFsr ?? "-"} squeeze=${squeeze === null ? "-" : squeeze.toFixed(3)}` +
             `(${squeeze === null ? "-" : Math.round(squeeze * 255)}/255)` +
-            ` || sweep=${sweep.toFixed(2)}/${IMU_TUNING.slashAt} armed=${this.slashArmed}` +
+            ` || baseX=${this.baseX.toFixed(2)} sweep=${sweep.toFixed(2)}/${IMU_TUNING.slashAt}` +
+            `${this.armed ? " ready" : ` sweeping(quiet ${this.quietFor.toFixed(2)}s)`}` +
             ` pitch=${pitch.toFixed(1)} shield=${IMU_TUNING.shieldEnabled ? String(this.shield) : "off"}` +
             ` draw=${this.drawing ? this.peakDraw.toFixed(2) : "-"}`
         );
