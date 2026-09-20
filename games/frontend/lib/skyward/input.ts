@@ -170,7 +170,7 @@ export class IMUInputProvider implements InputProvider {
     const deltaX = moveX - this.baseX;
     const sweep = IMU_TUNING.slashAxis === "right" ? deltaX : IMU_TUNING.slashAxis === "left" ? -deltaX : Math.abs(deltaX);
     const pitch = IMU_TUNING.shieldUseMagnitude ? Math.abs(frame.pitch) : frame.pitch * IMU_TUNING.pitchSign;
-    const squeeze = frame.squeeze;
+    const squeeze = frame.squeeze ?? null;
 
     // Shield: pitch angle raised, with hysteresis so it does not flicker.
     if (IMU_TUNING.shieldEnabled) {

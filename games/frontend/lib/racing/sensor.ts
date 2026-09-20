@@ -25,11 +25,11 @@ export interface SensorFrame {
    */
   move: number;
   /** vertical move axis, 8-field firmware only; cumulative like move. */
-  moveY: number | null;
+  moveY?: number | null;
   /** force sensor, normalised 0..1; 8-field firmware only */
-  squeeze: number | null;
+  squeeze?: number | null;
   /** raw force sensor ADC count, 8-field firmware only */
-  rawFsr: number | null;
+  rawFsr?: number | null;
   /** performance.now() when the frame arrived */
   t: number;
 }

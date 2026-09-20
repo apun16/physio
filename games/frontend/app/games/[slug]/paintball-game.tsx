@@ -1,9 +1,11 @@
 "use client";
 
-import { ArrowLeft, Crosshair } from "lucide-react";
+import { ArrowLeft, Bluetooth, Crosshair } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { PaintballGame } from "@/lib/paintball/game";
+import { PaintballHardware } from "@/lib/paintball/hardware";
+import { SerialSensor } from "@/lib/racing/sensor";
 import type { HudSnapshot } from "@/lib/paintball/types";
 import "./paintball.css";
 
@@ -37,6 +39,12 @@ export default function PaintballGameView() {
   const shellRef = useRef<HTMLElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<PaintballGame | null>(null);
+  const [sensor] = useState(() => new SerialSensor());
+  const sensorStatus = useSyncExternalStore(
+    (notify) => sensor.subscribe(notify),
+    () => sensor.status,
+    () => "disconnected" as const
+  );
   const [hud, setHud] = useState<HudSnapshot>(emptyHud);
   const [screen, setScreen] = useState<"start" | "play">("start");
 
@@ -45,6 +53,10 @@ export default function PaintballGameView() {
     const shell = shellRef.current;
     if (!canvas || !shell) return;
     const game = new PaintballGame(canvas, shell);
+    // squeeze shoots, steer moves left and right, roll moves forward and back.
+    // The keyboard keeps working alongside it.
+    const hardware = new PaintballHardware(sensor);
+    game.input.hardware = (dt) => hardware.poll(dt);
     gameRef.current = game;
     let last = performance.now();
     let live = true;
@@ -81,9 +93,12 @@ export default function PaintballGameView() {
       window.removeEventListener("resize", onResize);
       window.removeEventListener("keydown", onKey);
       game.dispose();
+      void sensor.disconnect();
       gameRef.current = null;
     };
-  }, []);
+  }, [sensor]);
+
+  const sensorConnected = sensorStatus === "connected";
 
   const begin = () => {
     setScreen("play");
@@ -97,6 +112,11 @@ export default function PaintballGameView() {
         <Link href="/dashboard"><ArrowLeft size={16} /> QUEST HUB</Link>
         <div><span>INKBURST</span><b>WORLD 03</b></div>
         <div className="paint-top-actions">
+          {sensorStatus !== "unsupported" && (
+            <button type="button" onClick={() => (sensorConnected ? sensor.disconnect() : sensor.connect())} aria-label={sensorConnected ? "Disconnect controller" : "Connect controller"}>
+              <Bluetooth size={14} /> {sensorConnected ? "CONTROLLER ON" : sensorStatus === "connecting" ? "CONNECTING" : "CONNECT"}
+            </button>
+          )}
           <button type="button" onClick={() => gameRef.current?.togglePause()}>PAUSE</button>
         </div>
       </header>
@@ -145,11 +165,12 @@ export default function PaintballGameView() {
             <h1>INKBURST</h1>
             <p>First-person paintball down a city street. Squeeze, aim, splat.</p>
             <ul className="paint-keys">
-              <li><b>ARROWS</b><small>MOVE</small></li>
+              <li><b>SQUEEZE</b><small>SHOOT</small></li>
               <li><b>MOUSE</b><small>AIM</small></li>
-              <li><b>CLICK</b><small>SHOOT</small></li>
-              <li><b>ESC</b><small>PAUSE</small></li>
+              <li><b>STEER</b><small>MOVE L / R</small></li>
+              <li><b>ROLL</b><small>FWD / BACK</small></li>
             </ul>
+            <small className="paint-alt-keys">No controller? Arrows move, click shoots, Esc pauses.</small>
             <div className="paint-actions">
               <button type="button" className="go" onClick={begin}>START MATCH</button>
             </div>
@@ -158,9 +179,10 @@ export default function PaintballGameView() {
       </section>
       <footer className="paint-foot">
         <Crosshair size={14} />
-        <span>ARROWS MOVE</span>
-        <span>MOUSE AIM</span>
-        <span>CLICK SHOOT</span>
+        <span>SQUEEZE SHOOT</span>
+        <span>STEER MOVE</span>
+        <span>ROLL FWD/BACK</span>
+        <b className={sensorConnected ? "" : "idle"}><i /> {sensorConnected ? "CONTROLLER LIVE" : sensorStatus === "unsupported" ? "USE CHROME OR EDGE" : "KEYBOARD MODE"}</b>
       </footer>
     </main>
   );
