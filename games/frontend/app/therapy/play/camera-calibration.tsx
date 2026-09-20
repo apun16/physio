@@ -68,7 +68,7 @@ export default function CameraCalibration({
   const latestRef = useRef<MovementFrame | null>(null);
   const captureRef = useRef<{ minimum: number; maximum: number; samples: number; until: number } | null>(null);
   const onFrameRef = useRef(onFrame);
-  const smoothRef = useRef({ x: 0.5, y: 0.5, rawValue: 1, leftLeg: 0, rightLeg: 0, confidence: 0, ready: false });
+  const smoothRef = useRef({ x: 0.5, y: 0.5, rawValue: 1, leftLeg: 0, rightLeg: 0, confidence: 0, compensation: 0, ready: false });
   const hudAtRef = useRef(0);
   const [status, setStatus] = useState<"off" | "loading" | "live" | "capturing" | "ready">("off");
   const [confidence, setConfidence] = useState(0);
@@ -100,7 +100,7 @@ export default function CameraCalibration({
       if (!video) throw new Error("Camera preview is unavailable");
       video.srcObject = streamRef.current;
       await video.play();
-      smoothRef.current = { x: 0.5, y: 0.5, rawValue: 1, leftLeg: 0, rightLeg: 0, confidence: 0, ready: false };
+      smoothRef.current = { x: 0.5, y: 0.5, rawValue: 1, leftLeg: 0, rightLeg: 0, confidence: 0, compensation: 0, ready: false };
       setStatus("live");
       loop();
     } catch (reason) {
@@ -141,43 +141,17 @@ export default function CameraCalibration({
     const hipMid = (landmarks[23].x + landmarks[24].x) / 2;
     const trunkLean = Math.min(1, Math.abs(shoulderMid - hipMid) / 0.22);
 
-    if (spec.tracking.metric === "seated_leg_lift") {
-      const hipY = ((landmarks[23]?.y ?? 0.5) + (landmarks[24]?.y ?? 0.5)) / 2;
-      const leftAnkle = landmarks[27] ?? landmarks[28];
-      const rightAnkle = landmarks[28] ?? landmarks[27];
-      const leftKnee = landmarks[25] ?? leftAnkle;
-      const rightKnee = landmarks[26] ?? rightAnkle;
-      const leftLift = hipY - ((leftAnkle?.y ?? 0.9) * 0.65 + (leftKnee?.y ?? 0.7) * 0.35);
-      const rightLift = hipY - ((rightAnkle?.y ?? 0.9) * 0.65 + (rightKnee?.y ?? 0.7) * 0.35);
-      const bodyVisible = Math.min(
-        landmarkConfidence(landmarks[23]),
-        landmarkConfidence(landmarks[24]),
-        landmarkConfidence(leftKnee),
-        landmarkConfidence(rightKnee),
-        landmarkConfidence(leftAnkle),
-        landmarkConfidence(rightAnkle)
-      );
-      return {
-        x: 1 - ((leftAnkle?.x ?? 0.5) + (rightAnkle?.x ?? 0.5)) / 2,
-        y: ((leftAnkle?.y ?? 0.8) + (rightAnkle?.y ?? 0.8)) / 2,
-        rawValue: (leftLift + rightLift) / 2,
-        leftLeg: leftLift,
-        rightLeg: rightLift,
-        confidence: bodyVisible,
-        compensation: trunkLean,
-        at: performance.now()
-      };
-    }
-
     const right = spec.exercise.side !== "left";
     const [shoulder, wrist] = right ? [12, 16] : [11, 15];
+    const shoulderPoint = landmarks[shoulder];
+    const wristPoint = landmarks[wrist];
     return {
-      x: 1 - landmarks[wrist].x,
-      y: landmarks[wrist].y,
-      rawValue: 1 - landmarks[wrist].y,
+      x: 1 - wristPoint.x,
+      y: wristPoint.y,
+      rawValue: shoulderPoint.y - wristPoint.y,
       leftLeg: 0,
       rightLeg: 0,
-      confidence: Math.min(landmarkConfidence(landmarks[shoulder]), landmarkConfidence(landmarks[wrist]), landmarkConfidence(landmarks[11]), landmarkConfidence(landmarks[12])),
+      confidence: Math.min(landmarkConfidence(shoulderPoint), landmarkConfidence(wristPoint), landmarkConfidence(landmarks[11]), landmarkConfidence(landmarks[12])),
       compensation: trunkLean,
       at: performance.now()
     };
@@ -193,6 +167,7 @@ export default function CameraCalibration({
         leftLeg: frame.leftLeg,
         rightLeg: frame.rightLeg,
         confidence: frame.confidence,
+        compensation: frame.compensation,
         ready: true
       };
       return frame;
@@ -204,6 +179,7 @@ export default function CameraCalibration({
     current.leftLeg += (frame.leftLeg - current.leftLeg) * alpha;
     current.rightLeg += (frame.rightLeg - current.rightLeg) * alpha;
     current.confidence += (frame.confidence - current.confidence) * alpha;
+    current.compensation += (frame.compensation - current.compensation) * alpha;
     return {
       ...frame,
       x: current.x,
@@ -211,7 +187,8 @@ export default function CameraCalibration({
       rawValue: current.rawValue,
       leftLeg: current.leftLeg,
       rightLeg: current.rightLeg,
-      confidence: current.confidence
+      confidence: current.confidence,
+      compensation: current.compensation
     };
   }
 
@@ -242,9 +219,7 @@ export default function CameraCalibration({
             if (performance.now() >= capture.until) {
               captureRef.current = null;
               if (capture.samples < 8 || capture.maximum - capture.minimum < 0.02) {
-                setError(spec.template === "sit_shapes"
-                  ? "Not enough leg movement was visible. Sit side-on and lift through your prescribed range."
-                  : "Not enough movement was visible. Reposition the camera and capture again.");
+                setError("Not enough movement was visible. Reposition the camera and capture again.");
                 setStatus("live");
               } else {
                 setStatus("ready");
@@ -291,6 +266,19 @@ export default function CameraCalibration({
     ctx.stroke();
     ctx.fillStyle = "#ffd36b";
     for (const point of landmarks) ctx.fillRect(point.x * canvas.width - 2, point.y * canvas.height - 2, 4, 4);
+    if (spec.tracking.mode === "pose" && spec.template === "arc_runner") {
+      const right = spec.exercise.side !== "left";
+      const tracked = right ? [12, 16] : [11, 15];
+      ctx.strokeStyle = "#ffd36b";
+      ctx.lineWidth = 3;
+      for (const index of tracked) {
+        const point = landmarks[index];
+        if (!point) continue;
+        ctx.beginPath();
+        ctx.arc(point.x * canvas.width, point.y * canvas.height, 10, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
   }
 
   function captureRange() {
@@ -305,11 +293,9 @@ export default function CameraCalibration({
     setStatus("capturing");
   }
 
-  const guidance = spec.template === "sit_shapes"
-    ? "Sit side-on to the camera so both hips, knees, and ankles stay in frame."
-    : spec.template === "fruit_catcher"
-      ? "Hold your hand in view with every fingertip visible."
-      : "Keep your shoulder, wrist, and both sides of your torso visible.";
+  const guidance = spec.template === "fruit_catcher"
+    ? "Hold your hand in view with every fingertip visible."
+    : "Keep your right shoulder and right wrist visible while you raise your arm.";
 
   const canCapture = confidence >= Math.min(0.45, spec.tracking.confidenceThreshold * 0.75);
 

@@ -12,7 +12,7 @@ import styles from "./therapy-game.module.css";
 type Point = { x: number; y: number };
 
 function demoSpec() {
-  return generateGameSpec(extractExercisePlan("Right shoulder flexion, 2 sets of 8. Avoid trunk lean. No overhead reaching."), "demo-session");
+  return generateGameSpec(extractExercisePlan("Right shoulder flexion. 2 sets of 8. Avoid trunk lean. No overhead reaching."), "demo-session");
 }
 
 export default function TherapyGame() {
@@ -38,7 +38,8 @@ export default function TherapyGame() {
   useEffect(() => {
     const stored = sessionStorage.getItem("therapy-game-spec");
     try {
-      setSpec(stored ? GameSpecSchema.parse(JSON.parse(stored)) : demoSpec());
+      const parsed = stored ? GameSpecSchema.parse(JSON.parse(stored)) : demoSpec();
+      setSpec(parsed);
     } catch {
       setSpec(demoSpec());
     }
@@ -77,8 +78,16 @@ export default function TherapyGame() {
       setTrajectory((points) => [...points.slice(-59), { x: next.x, y: plotted }]);
     }
     const confident = next.confidence >= spec.tracking.confidenceThreshold;
+    const leanWarned = spec.safety.warnings.some((warning) => /lean/i.test(warning));
+    const leaning = leanWarned && next.compensation > 0.36;
     if (!confident) send({ type: "movement_confidence", confidence: next.confidence });
-    if (spec.template === "fruit_catcher" || spec.template === "sit_shapes") return;
+    if (leaning) send({ type: "movement_confidence", confidence: next.confidence });
+    if (spec.template === "fruit_catcher" || spec.template === "arc_runner") return;
+    if (leaning) {
+      armed.current = false;
+      holdStarted.current = 0;
+      return;
+    }
 
     if (progress < 0.28) {
       armed.current = true;
@@ -130,6 +139,11 @@ export default function TherapyGame() {
 
   const setNumber = Math.min(spec.exercise.sets, Math.floor(completed / spec.exercise.repetitions) + 1);
   const repNumber = completed % spec.exercise.repetitions;
+  const watchLean = spec.safety.warnings.some((warning) => /lean/i.test(warning));
+  const leaning = watchLean && (frame?.compensation ?? 0) > 0.36;
+  const cameraFloor = spec.tracking.confidenceThreshold;
+  const cameraOk = !!frame && frame.confidence >= cameraFloor;
+  const scoringAllowed = started && !paused && !!range && cameraOk && !leaning;
 
   return (
     <main className={styles.page}>
@@ -142,13 +156,26 @@ export default function TherapyGame() {
       <div className={styles.layout}>
         <section className={styles.gameColumn}>
           <div className={styles.gameHud}>
-            <span><small>CAMERA CONFIDENCE</small><b className={frame && frame.confidence >= spec.tracking.confidenceThreshold ? styles.confident : styles.notConfident}>{Math.round((frame?.confidence ?? 0) * 100)}%</b></span>
+            <span><small>CAMERA CONFIDENCE</small><b className={frame && frame.confidence >= cameraFloor ? styles.confident : styles.notConfident}>{Math.round((frame?.confidence ?? 0) * 100)}%</b></span>
             <span><small>COMPLETED</small><b>{completed}/{spec.gameplay.targetCount}</b></span>
             <span><small>TRACKING</small><b>{gripLive ? "Grip-force hardware scoring" : spec.tracking.webcamMeasurementLabel}</b></span>
           </div>
 
           <div className={`${styles.gameStage} ${paused || !range ? styles.stagePaused : ""}`}>
-            {spec.template === "arc_runner" && <ArcRunner progress={progress} completed={completed} />}
+            {spec.template === "arc_runner" && (
+              <ArcRunner
+                progress={progress}
+                completed={completed % spec.exercise.repetitions}
+                gates={spec.exercise.repetitions}
+                playing={started && !paused && !!range && !leaning}
+                scoring={scoringAllowed}
+                onClear={(confident) => {
+                  setAttempted((value) => value + 1);
+                  if (confident) setCompleted((value) => Math.min(spec.gameplay.targetCount, value + 1));
+                  else send({ type: "attempt_unscorable", confidence: liveFrame.current?.confidence ?? 0 });
+                }}
+              />
+            )}
             {spec.template === "fruit_catcher" && (
               <FruitCatcher
                 liveFrame={liveFrame}
@@ -163,43 +190,33 @@ export default function TherapyGame() {
                 }}
               />
             )}
-            {spec.template === "sit_shapes" && (
-              <SitShapes
-                liveFrame={liveFrame}
-                range={range ?? { minimum: 0, maximum: 1 }}
-                playing={started && !paused}
-                holdMs={Math.max(450, spec.gameplay.targetHoldMs)}
-                confidenceThreshold={spec.tracking.confidenceThreshold}
-                completed={completed}
-                targetCount={spec.gameplay.targetCount}
-                onMatch={(confident) => {
-                  setAttempted((value) => value + 1);
-                  if (confident) setCompleted((value) => Math.min(spec.gameplay.targetCount, value + 1));
-                  else send({ type: "attempt_unscorable", confidence: liveFrame.current?.confidence ?? 0 });
-                }}
-              />
-            )}
             {!range && <div className={styles.stageMessage}><ShieldAlert size={25} /><b>CALIBRATION REQUIRED</b><span>Use only the movement range your therapist instructed.</span></div>}
             {range && !started && <div className={styles.stageMessage}><Play size={25} /><b>READY TO START</b><span>Camera placement and landmarks are confirmed.</span><button className={styles.startSession} onClick={() => { setStarted(true); setPaused(false); send({ type: "start_calibration" }); }}>START SESSION</button></div>}
+            {started && !paused && range && leaning && (
+              <div className={styles.stageMessage}><ShieldAlert size={25} /><b>SCORING PAUSED</b><span>Avoid trunk lean. Return to an upright posture before the next repetition counts.</span></div>
+            )}
+            {started && !paused && range && !leaning && frame && frame.confidence < spec.tracking.confidenceThreshold && (
+              <div className={styles.stageMessage}><ShieldAlert size={25} /><b>SCORING PAUSED</b><span>Camera confidence is too low. Recalibrate or move back into view.</span></div>
+            )}
             {paused && range && started && <div className={styles.stageMessage}><Pause size={25} /><b>GAME PAUSED</b></div>}
           </div>
 
           <div className={styles.trajectory}>
-            <div>
-              <span>{spec.template === "fruit_catcher" ? "GRIP LINE" : spec.template === "sit_shapes" ? "SHAPE MATCH" : "TARGET TRAJECTORY"}</span>
-              <i className={styles.targetLine} />
-              <span>{spec.template === "fruit_catcher" ? "YOUR GRIP" : spec.template === "sit_shapes" ? "YOUR LEGS" : "ACTUAL TRAJECTORY"}</span>
-              <i className={styles.actualLine} />
+              <div>
+                <span>{spec.template === "fruit_catcher" ? "GRIP LINE" : "TARGET TRAJECTORY"}</span>
+                <i className={styles.targetLine} />
+                <span>{spec.template === "fruit_catcher" ? "YOUR GRIP" : "ACTUAL TRAJECTORY"}</span>
+                <i className={styles.actualLine} />
+              </div>
+              <svg viewBox="0 0 600 100" preserveAspectRatio="none">
+                {spec.template === "fruit_catcher" ? (
+                  <line x1="0" y1="35" x2="600" y2="35" className={styles.gripTarget} />
+                ) : (
+                  <path d="M0 80 C100 80 110 20 200 20 S300 80 400 80 S500 20 600 20" />
+                )}
+                <polyline points={trajectory.map((point, index) => `${index * 10},${94 - point.y * 82}`).join(" ")} />
+              </svg>
             </div>
-            <svg viewBox="0 0 600 100" preserveAspectRatio="none">
-              {spec.template === "fruit_catcher" || spec.template === "sit_shapes" ? (
-                <line x1="0" y1="35" x2="600" y2="35" className={styles.gripTarget} />
-              ) : (
-                <path d="M0 80 C100 80 110 20 200 20 S300 80 400 80 S500 20 600 20" />
-              )}
-              <polyline points={trajectory.map((point, index) => `${index * 10},${94 - point.y * 82}`).join(" ")} />
-            </svg>
-          </div>
 
           <div className={styles.actions}>
             <button onClick={() => setPaused((value) => !value)} disabled={!range}>{paused ? <Play size={14} /> : <Pause size={14} />}{paused ? "RESUME" : "PAUSE"}</button>
@@ -227,13 +244,90 @@ export default function TherapyGame() {
   );
 }
 
-function ArcRunner({ progress, completed }: { progress: number; completed: number }) {
+function ArcRunner({
+  progress,
+  completed,
+  gates,
+  playing,
+  scoring,
+  onClear
+}: {
+  progress: number;
+  completed: number;
+  gates: number;
+  playing: boolean;
+  scoring: boolean;
+  onClear: (confident: boolean) => void;
+}) {
+  const count = Math.min(8, Math.max(1, gates));
+  const heights = [20, 24, 18, 22, 20, 26, 18, 22];
+  const stage = useRef<HTMLDivElement>(null);
+  const ground = useRef<HTMLDivElement>(null);
+  const square = useRef<HTMLDivElement>(null);
+  const gateNodes = useRef<(HTMLSpanElement | null)[]>([]);
+  const playingRef = useRef(playing);
+  const scoringRef = useRef(scoring);
+  const progressRef = useRef(progress);
+  const onClearRef = useRef(onClear);
+  const passed = useRef(new Set<number>());
+  const motion = useRef({ world: 0 });
+
+  playingRef.current = playing;
+  scoringRef.current = scoring;
+  progressRef.current = progress;
+  onClearRef.current = onClear;
+
+  useEffect(() => {
+    let raf = 0;
+    let last = performance.now();
+    const spacing = 92;
+    const tick = (now: number) => {
+      const dt = Math.min(40, now - last);
+      last = now;
+      if (playingRef.current) motion.current.world += dt * 0.034;
+      const width = stage.current?.clientWidth ?? 700;
+      const period = count * spacing;
+      if (ground.current) {
+        ground.current.style.transform = `translateX(${-((motion.current.world / 100) * width) % 64}px)`;
+      }
+      const jump = progressRef.current;
+      if (square.current) square.current.style.bottom = `${16 + jump * 36}%`;
+      const lap = Math.floor(motion.current.world / period);
+      gateNodes.current.forEach((node, index) => {
+        if (!node) return;
+        let x = 110 + index * spacing - (motion.current.world % period);
+        if (x < -16) x += period;
+        node.style.left = `${x}%`;
+        node.style.opacity = x < -12 || x > 118 ? "0" : "1";
+        if (!playingRef.current || x > 14 || x < 8) return;
+        const id = lap * count + index;
+        if (passed.current.has(id)) return;
+        passed.current.add(id);
+        const needed = 0.34 + (heights[index] - 18) / 90;
+        onClearRef.current(scoringRef.current && jump >= needed);
+      });
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [count]);
+
   return (
-    <div className={styles.arcRunner}>
+    <div className={styles.arcRunner} ref={stage}>
       <div className={styles.arcSky}><i /><i /><i /></div>
-      {[0,1,2,3].map((gate) => <span className={styles.arcGate} style={{ left: `${28 + gate * 23}%`, height: `${35 + (gate % 2) * 22}%` }} key={gate} />)}
-      <div className={styles.squareHero} style={{ bottom: `${12 + progress * 66}%` }}><i /></div>
-      <b>ARC {completed + 1}</b>
+      {Array.from({ length: count }, (_, gate) => (
+        <span
+          className={styles.arcGate}
+          ref={(node) => { gateNodes.current[gate] = node; }}
+          style={{ height: `${heights[gate]}%` }}
+          key={gate}
+        />
+      ))}
+      <div className={styles.arcGround} aria-hidden="true">
+        <div className={styles.arcGroundTrack} ref={ground} />
+      </div>
+      <div className={styles.squareHero} ref={square} style={{ opacity: scoring ? 1 : 0.45 }}><i /></div>
+      <b>GATE {Math.min(count, completed + 1)}/{count}</b>
     </div>
   );
 }
@@ -344,98 +438,6 @@ function FruitCatcher({
         <img src="/therapy/basket.png?v=2" alt="Basket" />
       </div>
       <b ref={labelNode}>OPEN HAND · GRIP TO CATCH</b>
-    </div>
-  );
-}
-
-const LEG_SHAPES = [
-  { id: "together", label: "TOGETHER · VERTICAL", left: 0.2, right: 0.2 },
-  { id: "split-a", label: "ONE HIGH · ONE LOW", left: 0.84, right: 0.16 },
-  { id: "both-high", label: "BOTH HIGH", left: 0.82, right: 0.82 },
-  { id: "split-b", label: "ONE HIGH · ONE LOW", left: 0.16, right: 0.84 }
-] as const;
-
-function SitShapes({
-  liveFrame,
-  range,
-  playing,
-  holdMs,
-  confidenceThreshold,
-  completed,
-  targetCount,
-  onMatch
-}: {
-  liveFrame: { current: MovementFrame | null };
-  range: CalibrationRange;
-  playing: boolean;
-  holdMs: number;
-  confidenceThreshold: number;
-  completed: number;
-  targetCount: number;
-  onMatch: (confident: boolean) => void;
-}) {
-  const nearLeg = useRef<HTMLDivElement>(null);
-  const farLeg = useRef<HTMLDivElement>(null);
-  const ghostNear = useRef<HTMLDivElement>(null);
-  const ghostFar = useRef<HTMLDivElement>(null);
-  const labelNode = useRef<HTMLElement>(null);
-  const matchNode = useRef<HTMLElement>(null);
-  const playingRef = useRef(playing);
-  const onMatchRef = useRef(onMatch);
-  const holdRef = useRef(0);
-  const lockedRef = useRef(false);
-
-  playingRef.current = playing;
-  onMatchRef.current = onMatch;
-
-  useEffect(() => {
-    let raf = 0;
-    const span = Math.max(0.02, range.maximum - range.minimum);
-    const tick = () => {
-      const shape = LEG_SHAPES[completed % LEG_SHAPES.length];
-      const frame = liveFrame.current;
-      const lift = (value: number) => Math.max(0, Math.min(1, (value - range.minimum) / span));
-      const left = frame ? lift(frame.leftLeg) : 0;
-      const right = frame ? lift(frame.rightLeg) : 0;
-      const error = (Math.abs(left - shape.left) + Math.abs(right - shape.right)) / 2;
-      const matched = playingRef.current && error < 0.18;
-      if (ghostNear.current) ghostNear.current.style.bottom = `${10 + shape.left * 58}%`;
-      if (ghostFar.current) ghostFar.current.style.bottom = `${10 + shape.right * 58}%`;
-      if (nearLeg.current) nearLeg.current.style.bottom = `${10 + left * 58}%`;
-      if (farLeg.current) farLeg.current.style.bottom = `${10 + right * 58}%`;
-      if (labelNode.current) labelNode.current.textContent = shape.label;
-      if (matchNode.current) {
-        matchNode.current.textContent = matched ? "HOLD THE SHAPE" : "LIFT TO MATCH";
-        matchNode.current.className = matched ? styles.shapeHot : styles.shapeHint;
-      }
-      if (matched) {
-        if (!holdRef.current) holdRef.current = performance.now();
-        if (!lockedRef.current && performance.now() - holdRef.current >= holdMs) {
-          lockedRef.current = true;
-          const confident = (frame?.confidence ?? 0) >= confidenceThreshold;
-          onMatchRef.current(confident);
-        }
-      } else {
-        holdRef.current = 0;
-        lockedRef.current = false;
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [completed, confidenceThreshold, holdMs, liveFrame, range]);
-
-  return (
-    <div className={styles.sitShapes}>
-      <b ref={labelNode}>TOGETHER · VERTICAL</b>
-      <strong>SHAPE {(completed % LEG_SHAPES.length) + 1}/{LEG_SHAPES.length}</strong>
-      <div className={styles.chair} />
-      <div className={`${styles.leg} ${styles.ghostLeg} ${styles.farLeg}`} ref={ghostFar} />
-      <div className={`${styles.leg} ${styles.ghostLeg} ${styles.nearLeg}`} ref={ghostNear} />
-      <div className={`${styles.leg} ${styles.playerLeg} ${styles.farLeg}`} ref={farLeg} />
-      <div className={`${styles.leg} ${styles.playerLeg} ${styles.nearLeg}`} ref={nearLeg} />
-      <span ref={matchNode} className={styles.shapeHint}>LIFT TO MATCH</span>
-      <small>{completed}/{targetCount} MATCHED</small>
     </div>
   );
 }
