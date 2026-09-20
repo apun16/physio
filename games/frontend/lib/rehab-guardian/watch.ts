@@ -90,7 +90,7 @@ export function watchSensor(
         if (elapsed >= STALE_AFTER_MS) dispatch({ type: "stream_stale", msSinceLastValid: elapsed, at: now });
       }
     } else if (live) {
-      if (staleSent) dispatch({ type: "frames_stable" });
+      dispatch({ type: "frames_stable" });
       staleSent = false;
     }
   }, intervalMs);

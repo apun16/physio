@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createGuardian, isSidekickVisible, reduce } from "./machine";
-import { MALFORMED_THRESHOLD, type GuardianState } from "./types";
+import { MALFORMED_THRESHOLD } from "./types";
 
 function play(seed: Partial<GuardianState> = {}) {
   return reduce(createGuardian(seed), { type: "session_start" });
@@ -16,39 +16,26 @@ describe("guardian state machine", () => {
     expect(state.phase).toBe("healthy");
     expect(state.failureType).toBeNull();
     expect(state.greetingActive).toBe(false);
+    expect(isSidekickVisible(state, true)).toBe(false);
   });
 
-  it("does not treat a live X/Y sweep as an incident", () => {
-    expect(reduce(healthy(), { type: "unrealistic_jump" }).phase).toBe("healthy");
-  });
-
-  it("treats frozen readings as an incident after the long stillness window", () => {
-    const state = reduce(healthy(), { type: "frozen_readings" });
-    expect(state.phase).toBe("failure_detected");
-    expect(state.failureType).toBe("frozen_readings");
-  });
-
-  it("creates a stale-stream incident from a previously live session", () => {
-    const detected = reduce(healthy(), { type: "stream_stale", msSinceLastValid: 900 });
-    expect(detected.phase).toBe("failure_detected");
-    expect(detected.failureType).toBe("stale_stream");
-    expect(detected.incidentId).toBeTruthy();
-    const waiting = reduce(detected, { type: "prompt_user" });
-    expect(waiting.phase).toBe("awaiting_user");
-  });
-
-  it("does not fail on a single malformed packet", () => {
-    const state = reduce(healthy(), { type: "malformed_frame", at: 1 });
-    expect(state.phase).toBe("degraded");
-    expect(state.failureType).toBeNull();
-  });
-
-  it("opens an incident after persistent malformed packets", () => {
-    let state = healthy();
+  it("does not overlay during live MPU6050 play", () => {
+    const live = healthy();
+    const noisy = [
+      { type: "unrealistic_jump" as const },
+      { type: "frozen_readings" as const },
+      { type: "stream_stale" as const, msSinceLastValid: 60_000 },
+      { type: "command_ack_timeout" as const },
+      { type: "command_write_failed" as const },
+      { type: "malformed_frame" as const, at: 1 },
+      { type: "invalid_values" as const, at: 1 }
+    ];
+    let state = live;
+    for (const event of noisy) state = reduce(state, event);
     for (let i = 0; i < MALFORMED_THRESHOLD; i += 1) state = reduce(state, { type: "malformed_frame", at: 10 + i });
-    expect(state.phase).toBe("failure_detected");
-    expect(state.failureType).toBe("persistent_malformed");
-    expect(state.malformedCount).toBe(MALFORMED_THRESHOLD);
+    expect(state.phase).toBe("healthy");
+    expect(state.failureType).toBeNull();
+    expect(isSidekickVisible(state, true)).toBe(false);
   });
 
   it("suppresses an intentional disconnect", () => {
@@ -56,6 +43,7 @@ describe("guardian state machine", () => {
     expect(state.phase).toBe("pre_game");
     expect(state.failureType).toBeNull();
     expect(state.recoveryResult).toBe("suppressed");
+    expect(isSidekickVisible(state, true)).toBe(false);
   });
 
   it("suppresses a cancelled port picker", () => {
@@ -67,10 +55,10 @@ describe("guardian state machine", () => {
     expect(fromConnecting.failureType).toBeNull();
   });
 
-  it("records successful recovery", () => {
-    let state = reduce(healthy(), { type: "stream_stale", msSinceLastValid: 800 });
+  it("records successful recovery after a real disconnect", () => {
+    let state = reduce(healthy(), { type: "unexpected_disconnect" });
     state = reduce(state, { type: "prompt_user" });
-    state = reduce(state, { type: "user_diagnosis", choice: "controls_stopped" });
+    state = reduce(state, { type: "user_intent", intentional: false });
     state = reduce(state, { type: "start_recovery", method: "reconnect" });
     expect(state.phase).toBe("recovering");
     state = reduce(state, { type: "first_valid_frame" });
@@ -110,19 +98,10 @@ describe("guardian state machine", () => {
     expect(state.failureType).toBe("unexpected_disconnect");
   });
 
-  it("does not treat intentional stillness as a hardware failure", () => {
-    let state = reduce(healthy(), { type: "stream_stale", msSinceLastValid: 800 });
-    state = reduce(state, { type: "prompt_user" });
-    state = reduce(state, { type: "user_diagnosis", choice: "intentionally_still" });
-    expect(state.phase).toBe("healthy");
-    expect(state.recoveryResult).toBe("suppressed");
-    expect(state.failureType).toBeNull();
-  });
-
-  it("hides the sidekick during healthy gameplay and shows it after a failure", () => {
+  it("hides the sidekick during healthy gameplay and shows it after a disconnect", () => {
     const live = healthy();
     expect(isSidekickVisible(live, true)).toBe(false);
-    const failed = reduce(live, { type: "stream_stale", msSinceLastValid: 900 });
+    const failed = reduce(live, { type: "unexpected_disconnect" });
     expect(isSidekickVisible(failed, false)).toBe(true);
     expect(isSidekickVisible(reduce(failed, { type: "prompt_user" }), true)).toBe(true);
   });

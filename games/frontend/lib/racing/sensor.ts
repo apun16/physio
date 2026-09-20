@@ -71,6 +71,53 @@ export const STALE_AFTER_MS = 60_000;
 /** Identical MPU6050 readings for this long can mean a stuck sensor — not a player holding still. */
 export const FROZEN_AFTER_MS = 60_000;
 
+/** Peak-to-peak over ~1s above these is real motion, not MPU6050 noise. */
+const ACTIVE_DEG = 4;
+const ACTIVE_NORM = 0.08;
+
+function axisMin(frame: SensorFrame, next: SensorFrame): SensorFrame {
+  return {
+    ...next,
+    roll: Math.min(frame.roll, next.roll),
+    pitch: Math.min(frame.pitch, next.pitch),
+    yaw: Math.min(frame.yaw, next.yaw),
+    steer: Math.min(frame.steer, next.steer),
+    move: Math.min(frame.move, next.move),
+    moveY: frame.moveY == null || next.moveY == null ? next.moveY : Math.min(frame.moveY, next.moveY),
+    squeeze: frame.squeeze == null || next.squeeze == null ? next.squeeze : Math.min(frame.squeeze, next.squeeze),
+    rawFsr: next.rawFsr,
+    t: next.t
+  };
+}
+
+function axisMax(frame: SensorFrame, next: SensorFrame): SensorFrame {
+  return {
+    ...next,
+    roll: Math.max(frame.roll, next.roll),
+    pitch: Math.max(frame.pitch, next.pitch),
+    yaw: Math.max(frame.yaw, next.yaw),
+    steer: Math.max(frame.steer, next.steer),
+    move: Math.max(frame.move, next.move),
+    moveY: frame.moveY == null || next.moveY == null ? next.moveY : Math.max(frame.moveY, next.moveY),
+    squeeze: frame.squeeze == null || next.squeeze == null ? next.squeeze : Math.max(frame.squeeze, next.squeeze),
+    rawFsr: next.rawFsr,
+    t: next.t
+  };
+}
+
+/** True when the player actually moved — X, Y, squeeze, or IMU angles. */
+export function rangeLooksActive(min: SensorFrame, max: SensorFrame) {
+  return (
+    max.roll - min.roll > ACTIVE_DEG ||
+    max.pitch - min.pitch > ACTIVE_DEG ||
+    max.yaw - min.yaw > ACTIVE_DEG ||
+    max.steer - min.steer > ACTIVE_NORM ||
+    max.move - min.move > ACTIVE_NORM ||
+    Math.abs((max.moveY ?? 0) - (min.moveY ?? 0)) > ACTIVE_NORM ||
+    Math.abs((max.squeeze ?? 0) - (min.squeeze ?? 0)) > ACTIVE_NORM
+  );
+}
+
 /** Debug output: browser console plus the `npm run dev` terminal (via /api/sensor-log). */
 export function sensorLog(message: string) {
   console.log(`[sensor] ${message}`);
@@ -143,10 +190,12 @@ export class SerialSensor {
   private intentionalClose = false;
   private readFailed = false;
   private ackTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastSignature = "";
-  private freezeStartedAt = 0;
   private lastSample: SensorFrame | null = null;
   private lastJumpAt = 0;
+  private freezeStartedAt = 0;
+  private freezeWindowStart = 0;
+  private freezeMin: SensorFrame | null = null;
+  private freezeMax: SensorFrame | null = null;
 
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -180,8 +229,10 @@ export class SerialSensor {
     this.error = "";
     this.intentionalClose = false;
     this.readFailed = false;
-    this.lastSignature = "";
     this.freezeStartedAt = 0;
+    this.freezeWindowStart = 0;
+    this.freezeMin = null;
+    this.freezeMax = null;
     this.lastSample = null;
     this.clearAckWait();
     try {
@@ -309,17 +360,29 @@ export class SerialSensor {
   }
 
   private noteValidFrame(frame: SensorFrame) {
-    const signature = `${Math.round(frame.roll * 10)}:${Math.round(frame.pitch * 10)}:${Math.round(frame.yaw * 10)}:${Math.round(frame.steer * 100)}:${Math.round(frame.move * 100)}`;
-    if (signature === this.lastSignature) {
-      if (!this.freezeStartedAt) this.freezeStartedAt = frame.t;
-      else if (frame.t - this.freezeStartedAt > FROZEN_AFTER_MS) {
-        this.emitReliability("frozen_readings");
-        this.freezeStartedAt = frame.t;
-      }
+    if (!this.freezeMin || !this.freezeMax || !this.freezeWindowStart) {
+      this.freezeMin = frame;
+      this.freezeMax = frame;
+      this.freezeWindowStart = frame.t;
     } else {
-      this.lastSignature = signature;
-      this.freezeStartedAt = 0;
+      this.freezeMin = axisMin(this.freezeMin, frame);
+      this.freezeMax = axisMax(this.freezeMax, frame);
+      if (frame.t - this.freezeWindowStart >= 1000) {
+        if (rangeLooksActive(this.freezeMin, this.freezeMax)) {
+          this.freezeStartedAt = 0;
+        } else if (!this.freezeStartedAt) {
+          this.freezeStartedAt = this.freezeWindowStart;
+        }
+        this.freezeMin = frame;
+        this.freezeMax = frame;
+        this.freezeWindowStart = frame.t;
+      }
     }
+    if (this.freezeStartedAt && frame.t - this.freezeStartedAt > FROZEN_AFTER_MS) {
+      this.emitReliability("frozen_readings");
+      this.freezeStartedAt = frame.t;
+    }
+
     const previous = this.lastSample;
     this.lastSample = frame;
     if (!previous || frame.t - previous.t > 80) return;
