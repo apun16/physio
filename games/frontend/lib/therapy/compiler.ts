@@ -43,7 +43,10 @@ function firstQuestion(plan: Omit<ExercisePlan, "status" | "clarificationQuestio
     return `Your note lists ${conflict.values.join(" and ")} repetitions. Which number did your therapist intend?`;
   }
   if (!plan.bodyPart.value || !plan.movement.value) return "What body part and movement did your therapist ask you to practice?";
-  if (!plan.side.value && plan.bodyPart.value !== "hand" && plan.bodyPart.value !== "legs") {
+  if (plan.bodyPart.value === "legs" || plan.bodyPart.value === "ankle") {
+    return "This compiler currently turns shoulder and hand notes into games. A shoulder or hand note is needed to start.";
+  }
+  if (!plan.side.value && plan.bodyPart.value !== "hand") {
     return `Which side did your therapist specify for the ${plan.bodyPart.value} exercise?`;
   }
   if (!plan.repetitions.value) return "How many repetitions did your therapist prescribe?";
@@ -114,18 +117,12 @@ export function generateGameSpec(plan: ExercisePlan, sessionId = plan.id): GameS
   if (plan.status !== "ready" || plan.conflicts.length || !plan.bodyPart.value || !plan.movement.value || !plan.repetitions.value || !plan.sets.value) {
     throw new Error("Needs clarification before a game can be created");
   }
-  const template = plan.bodyPart.value === "hand"
-    ? "fruit_catcher"
-    : plan.bodyPart.value === "legs" || plan.bodyPart.value === "ankle" || plan.bodyPart.value === "full body"
-      ? "sit_shapes"
-      : "arc_runner";
+  const template = plan.bodyPart.value === "hand" ? "fruit_catcher" : "arc_runner";
   const metric = template === "fruit_catcher"
     ? "hand_closure"
-    : template === "sit_shapes"
-      ? "seated_leg_lift"
-      : plan.movement.value.includes("flexion") ? "shoulder_flexion" : "shoulder_reach";
+    : plan.movement.value.includes("flexion") ? "shoulder_flexion" : "shoulder_reach";
   const mode = template === "fruit_catcher" ? "hand" : "pose";
-  const title = template === "arc_runner" ? "Arc Runner" : template === "fruit_catcher" ? "Fruit Catcher" : "Sit Shapes";
+  const title = template === "arc_runner" ? "Arc Runner" : "Fruit Catcher";
   return GameSpecSchema.parse({
     version: 1,
     sessionId,
@@ -149,9 +146,7 @@ export function generateGameSpec(plan: ExercisePlan, sessionId = plan.id): GameS
       hardwareGripPreferred: template === "fruit_catcher",
       webcamMeasurementLabel: template === "fruit_catcher"
         ? "Hand-closure tracking (not grip-strength measurement)"
-        : template === "sit_shapes"
-          ? "Side-view seated leg tracking"
-          : "Camera movement tracking"
+        : "Right shoulder and wrist elevation"
     },
     gameplay: {
       targetCount: plan.repetitions.value * plan.sets.value,

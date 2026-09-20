@@ -41,7 +41,7 @@ export const GameSpecSchema = z.object({
   version: z.literal(1),
   sessionId: z.string().min(1),
   title: z.string().min(1).max(80),
-  template: z.enum(["arc_runner", "fruit_catcher", "sit_shapes"]),
+  template: z.enum(["arc_runner", "fruit_catcher"]),
   exercise: z.object({
     bodyPart: z.string().min(1),
     side: z.enum(["left", "right", "bilateral", "not_applicable"]),
@@ -55,7 +55,7 @@ export const GameSpecSchema = z.object({
   }),
   tracking: z.object({
     mode: z.enum(["pose", "hand", "pose_and_hardware"]),
-    metric: z.enum(["shoulder_flexion", "shoulder_reach", "hand_closure", "seated_leg_lift"]),
+    metric: z.enum(["shoulder_flexion", "shoulder_reach", "hand_closure"]),
     confidenceThreshold: z.number().min(0.5).max(0.95),
     hardwareGripPreferred: z.boolean(),
     webcamMeasurementLabel: z.string().min(1)
@@ -94,9 +94,6 @@ export const GameSpecSchema = z.object({
   }
   if (spec.template === "fruit_catcher" && spec.tracking.metric !== "hand_closure") {
     ctx.addIssue({ code: "custom", path: ["tracking", "metric"], message: "Fruit Catcher requires hand-closure tracking" });
-  }
-  if (spec.template === "sit_shapes" && spec.tracking.metric !== "seated_leg_lift") {
-    ctx.addIssue({ code: "custom", path: ["tracking", "metric"], message: "Sit Shapes requires seated leg-lift tracking" });
   }
 });
 

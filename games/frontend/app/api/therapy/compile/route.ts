@@ -1,4 +1,15 @@
-import { attachAgentSteps, compileWithLocalTools, compileWithOpenAI } from "../../../../lib/therapy/agent-compile";
+import { attachAgentSteps, compileWithLocalTools } from "../../../../lib/therapy/agent-compile";
+
+function agentOrigins() {
+  if (process.env.THERAPY_AGENT_URL) return [process.env.THERAPY_AGENT_URL];
+  if (process.env.NODE_ENV === "production") return [];
+  return [
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "http://localhost:5173",
+    "http://localhost:5174"
+  ];
+}
 
 export async function POST(request: Request) {
   const bodyText = await request.text();
@@ -14,11 +25,11 @@ export async function POST(request: Request) {
 
   const sessionId = body.sessionId ?? crypto.randomUUID();
   const metadata = body.metadata ?? {};
-  const agentUrl = process.env.THERAPY_AGENT_URL;
+  let lastError: unknown;
 
-  try {
-    if (agentUrl) {
-      const response = await fetch(`${agentUrl.replace(/\/$/, "")}/agents/therapy-game-agent/${sessionId}`, {
+  for (const origin of agentOrigins()) {
+    try {
+      const response = await fetch(`${origin.replace(/\/$/, "")}/agents/therapy-game-agent/${sessionId}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ type: "compile", text, metadata })
@@ -26,21 +37,16 @@ export async function POST(request: Request) {
       const payload = await response.json() as { error?: string; sessionId?: string; plan?: unknown; gameSpec?: unknown; steps?: never[] };
       if (!response.ok) throw new Error(payload.error ?? "Therapy agent compilation failed");
       return Response.json({ ...attachAgentSteps({ ...payload, provider: "therapy-game-agent" }), sessionId: payload.sessionId ?? sessionId });
+    } catch (error) {
+      lastError = error;
     }
-
-    if (process.env.OPENAI_API_KEY) {
-      return Response.json(await compileWithOpenAI(text, metadata, sessionId));
-    }
-
-    return Response.json(compileWithLocalTools(text, metadata, sessionId));
-  } catch (error) {
-    const fallback = compileWithLocalTools(text, metadata, sessionId);
-    if (fallback.plan) {
-      return Response.json({
-        ...fallback,
-        provider: `${fallback.provider} · recovered after ${error instanceof Error ? error.message : "agent error"}`
-      });
-    }
-    return Response.json({ error: error instanceof Error ? error.message : "Compilation failed" }, { status: 422 });
   }
+
+  const fallback = compileWithLocalTools(text, metadata, sessionId, "local-safe-demo");
+  return Response.json({
+    ...fallback,
+    provider: lastError
+      ? `${fallback.provider} · recovered after ${lastError instanceof Error ? lastError.message : "agent error"}`
+      : fallback.provider
+  });
 }
