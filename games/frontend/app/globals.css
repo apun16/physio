@@ -524,8 +524,13 @@ h1, h2, h3, p { margin-top: 0; }
 .trajectory-legend i { display: inline-block; width: 12px; height: 3px; }
 .trajectory-legend i.opt { background: #5ef0ff; }
 .trajectory-legend i.act { background: #ffd438; }
+.trajectory-legend i.hand { background: #ff6ad5; }
 .trajectory-legend i.coin { width: 8px; height: 8px; border-radius: 50%; background: #ffd438; }
 .trajectory-legend i.miss { width: 8px; height: 8px; border-radius: 50%; border: 2px solid #ef5444; box-sizing: border-box; }
+.hand-report { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #333957; }
+.hand-report > span { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 7px; color: #ff6ad5; font-size: 8px; font-weight: 700; letter-spacing: 1.2px; }
+.hand-report > span small { color: #6f7893; font-weight: 400; letter-spacing: .8px; }
+.hand-report-empty { margin: 9px 0 0; color: #626b89; font-size: 9px; text-align: center; }
 .trajectory-stats span { color: #626b87; font-size: 7px; font-weight: 700; letter-spacing: 1px; }
 .trajectory-stats span b { margin-left: 4px; color: var(--paper); }
 .coach-note { width: 100%; max-width: 560px; display: flex; flex-direction: column; gap: 5px; padding: 9px 12px; border: 1px solid var(--cyan); background: rgba(72,232,242,.06); text-align: left; }
