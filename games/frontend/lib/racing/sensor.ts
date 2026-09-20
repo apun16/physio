@@ -21,6 +21,31 @@ export interface SensorFrame {
 
 export type SensorStatus = "unsupported" | "disconnected" | "connecting" | "connected";
 
+/** Optional reliability observer. Games keep working if nobody subscribes. */
+export type SensorReliabilityKind =
+  | "connecting"
+  | "connected"
+  | "first_valid_frame"
+  | "malformed_frame"
+  | "invalid_values"
+  | "frozen_readings"
+  | "unrealistic_jump"
+  | "command_write_failed"
+  | "command_sent"
+  | "firmware_ack"
+  | "command_ack_timeout"
+  | "read_loop_failure"
+  | "unexpected_disconnect"
+  | "intentionally_disconnected"
+  | "port_open_failed"
+  | "port_picker_cancelled"
+  | "unsupported";
+
+export type SensorReliabilityEvent = {
+  kind: SensorReliabilityKind;
+  at: number;
+};
+
 /** Firmware single-char commands (see handleCommand in the .ino). */
 export type SensorCommand = "center" | "rollRight" | "rollLeft" | "gyroCal";
 const COMMAND_CHAR: Record<SensorCommand, string> = { center: "c", rollRight: "r", rollLeft: "l", gyroCal: "b" };
@@ -45,6 +70,17 @@ export function parseFrame(line: string, t: number): SensorFrame | null {
   return { roll, pitch, yaw, steer: Math.max(-1, Math.min(1, steer)), move: Math.max(-1, Math.min(1, move)), t };
 }
 
+/** Classifies a rejected line without exposing the raw packet. */
+export function classifyRejectedLine(line: string): "empty" | "status" | "wrong_field_count" | "non_finite" | "valid" {
+  const text = line.trim();
+  if (!text) return "empty";
+  if (text.startsWith("#")) return "status";
+  const parts = text.split(",");
+  if (parts.length !== 5) return "wrong_field_count";
+  if (parts.map(Number).some((value) => !Number.isFinite(value))) return "non_finite";
+  return "valid";
+}
+
 // Web Serial isn't in lib.dom yet; declare the bits we use.
 interface SerialPortLike {
   open(options: { baudRate: number }): Promise<void>;
@@ -65,10 +101,30 @@ export class SerialSensor {
   private port: SerialPortLike | null = null;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private listeners = new Set<() => void>();
+  private reliabilityListeners = new Set<(event: SensorReliabilityEvent) => void>();
+  private intentionalClose = false;
+  private readFailed = false;
+  private ackTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastSignature = "";
+  private freezeStartedAt = 0;
+  private lastSample: SensorFrame | null = null;
+  private lastJumpAt = 0;
 
   subscribe(listener: () => void) {
     this.listeners.add(listener);
     return () => { this.listeners.delete(listener); };
+  }
+
+  subscribeReliability(listener: (event: SensorReliabilityEvent) => void) {
+    this.reliabilityListeners.add(listener);
+    return () => { this.reliabilityListeners.delete(listener); };
+  }
+
+  private emitReliability(kind: SensorReliabilityKind) {
+    const event: SensorReliabilityEvent = { kind, at: typeof performance !== "undefined" ? performance.now() : Date.now() };
+    for (const listener of this.reliabilityListeners) {
+      try { listener(event); } catch { /* observer failures must never break IMU */ }
+    }
   }
 
   /** True when connected and a frame arrived recently. */
@@ -78,29 +134,44 @@ export class SerialSensor {
 
   async connect() {
     const serial = getSerial();
-    if (!serial || this.status === "connecting" || this.status === "connected") return;
+    if (!serial) {
+      this.emitReliability("unsupported");
+      return;
+    }
+    if (this.status === "connecting" || this.status === "connected") return;
     this.error = "";
+    this.intentionalClose = false;
+    this.readFailed = false;
+    this.lastSignature = "";
+    this.freezeStartedAt = 0;
+    this.lastSample = null;
+    this.clearAckWait();
     try {
       sensorLog("opening port picker...");
       const port = await serial.requestPort();
       this.setStatus("connecting");
+      this.emitReliability("connecting");
       sensorLog("port chosen, opening at 115200 baud...");
       await port.open({ baudRate: 115200 });
       sensorLog("port OPEN. Waiting for data (nothing below = port opened but ESP32 sent no bytes)");
       this.port = port;
       this.latest = null;
       this.setStatus("connected");
+      this.emitReliability("connected");
       void this.readLoop(port);
     } catch (reason) {
       // Picker dismissed or port busy.
       this.port = null;
-      this.error = reason instanceof Error && reason.name !== "NotFoundError" ? reason.message : "";
+      const cancelled = reason instanceof Error && reason.name === "NotFoundError";
+      this.error = cancelled ? "" : reason instanceof Error ? reason.message : "";
       sensorLog(`connect failed: ${reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason)}`);
       this.setStatus("disconnected");
+      this.emitReliability(cancelled ? "port_picker_cancelled" : "port_open_failed");
     }
   }
 
   async disconnect() {
+    this.intentionalClose = true;
     await this.reader?.cancel().catch(() => undefined); // readLoop closes the port
   }
 
@@ -110,6 +181,11 @@ export class SerialSensor {
     const writer = writable.getWriter();
     try {
       await writer.write(new TextEncoder().encode(COMMAND_CHAR[command]));
+      this.emitReliability("command_sent");
+      this.waitForAck();
+    } catch {
+      this.emitReliability("command_write_failed");
+      this.clearAckWait();
     } finally {
       writer.releaseLock();
     }
@@ -140,14 +216,26 @@ export class SerialSensor {
               const rawLine = buffer.slice(0, newline);
               const frame = parseFrame(rawLine, performance.now());
               if (frame) {
+                this.noteValidFrame(frame);
                 this.latest = frame;
                 frames += 1;
+                if (frames === 1) this.emitReliability("first_valid_frame");
                 if (frames <= 3) sensorLog(`first frames: ${JSON.stringify(rawLine.trim())} -> steer=${frame.steer}`);
-              } else if (rawLine.trim().startsWith("#")) {
-                sensorLog(`firmware says: ${rawLine.trim()}`);
-              } else if (rawLine.trim()) {
-                rejected += 1;
-                if (rejected <= 5) sensorLog(`rejected line: ${JSON.stringify(rawLine.trim())} (expected 5 comma-separated numbers)`);
+              } else {
+                const classified = classifyRejectedLine(rawLine);
+                if (classified === "status") {
+                  this.clearAckWait();
+                  this.emitReliability("firmware_ack");
+                  sensorLog(`firmware says: ${rawLine.trim()}`);
+                } else if (classified === "wrong_field_count") {
+                  rejected += 1;
+                  this.emitReliability("malformed_frame");
+                  if (rejected <= 5) sensorLog(`rejected line: ${JSON.stringify(rawLine.trim())} (expected 5 comma-separated numbers)`);
+                } else if (classified === "non_finite") {
+                  rejected += 1;
+                  this.emitReliability("invalid_values");
+                  if (rejected <= 5) sensorLog(`rejected line: ${JSON.stringify(rawLine.trim())} (expected 5 comma-separated numbers)`);
+                }
               }
               buffer = buffer.slice(newline + 1);
               newline = buffer.indexOf("\n");
@@ -163,15 +251,63 @@ export class SerialSensor {
     } catch (reason) {
       this.error = reason instanceof Error ? reason.message : "Sensor read failed";
       sensorLog(`read error: ${this.error}`);
+      this.readFailed = true;
+      if (!this.intentionalClose) this.emitReliability("read_loop_failure");
     } finally {
       clearInterval(reportTimer);
+      this.clearAckWait();
       report();
       sensorLog("port closed");
       await port.close().catch(() => undefined);
       this.port = null;
       this.latest = null;
+      this.lastSample = null;
       this.setStatus("disconnected");
+      if (this.intentionalClose) this.emitReliability("intentionally_disconnected");
+      else if (!this.readFailed) this.emitReliability("unexpected_disconnect");
+      this.intentionalClose = false;
+      this.readFailed = false;
     }
+  }
+
+  private noteValidFrame(frame: SensorFrame) {
+    const signature = `${Math.round(frame.roll * 10)}:${Math.round(frame.pitch * 10)}:${Math.round(frame.yaw * 10)}:${Math.round(frame.steer * 100)}:${Math.round(frame.move * 100)}`;
+    if (signature === this.lastSignature) {
+      if (!this.freezeStartedAt) this.freezeStartedAt = frame.t;
+      else if (frame.t - this.freezeStartedAt > 6000) {
+        this.emitReliability("frozen_readings");
+        this.freezeStartedAt = frame.t;
+      }
+    } else {
+      this.lastSignature = signature;
+      this.freezeStartedAt = 0;
+    }
+    const previous = this.lastSample;
+    this.lastSample = frame;
+    if (!previous || frame.t - previous.t > 80) return;
+    if (frame.t - this.lastJumpAt < 8000) return;
+    const dRoll = Math.abs(frame.roll - previous.roll);
+    const dPitch = Math.abs(frame.pitch - previous.pitch);
+    const dYaw = Math.abs(frame.yaw - previous.yaw);
+    const dSteer = Math.abs(frame.steer - previous.steer);
+    const dMove = Math.abs(frame.move - previous.move);
+    if (dRoll > 80 || dPitch > 80 || dYaw > 80 || dSteer > 1.35 || dMove > 1.35) {
+      this.lastJumpAt = frame.t;
+      this.emitReliability("unrealistic_jump");
+    }
+  }
+
+  private waitForAck() {
+    this.clearAckWait();
+    this.ackTimer = setTimeout(() => {
+      this.ackTimer = null;
+      this.emitReliability("command_ack_timeout");
+    }, 4500);
+  }
+
+  private clearAckWait() {
+    if (this.ackTimer) clearTimeout(this.ackTimer);
+    this.ackTimer = null;
   }
 
   private setStatus(status: SensorStatus) {
