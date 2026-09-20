@@ -1,4 +1,4 @@
-import type { GuardianState, SanitizedIncident } from "./types";
+import type { GuardianGame, GuardianState, SanitizedIncident } from "./types";
 
 const APP_VERSION = "0.1.0";
 
@@ -22,12 +22,12 @@ const ALLOWED_KEYS = [
 
 const FORBIDDEN = /roll|pitch|yaw|steer|move|packet|landmark|email|name|diagnos|camera|image|video|voice|audio/i;
 
-export function sanitizeIncident(state: GuardianState, environment = "development"): SanitizedIncident | null {
+export function sanitizeIncident(state: GuardianState, environment = "development", game: GuardianGame = "racing"): SanitizedIncident | null {
   if (!state.incidentId || !state.failureType) return null;
   return {
     incidentId: state.incidentId,
     failureType: state.failureType,
-    game: "racing",
+    game,
     component: "imu",
     inputMode: state.inputMode,
     source: state.source,

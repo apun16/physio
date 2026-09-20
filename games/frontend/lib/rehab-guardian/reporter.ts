@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import type { GuardianPhase, GuardianState, SanitizedIncident } from "./types";
+import type { GuardianGame, GuardianPhase, GuardianState, SanitizedIncident } from "./types";
 import { assertSanitized, sanitizeIncident } from "./privacy";
 
 const RATE_MS = 12_000;
@@ -18,7 +18,7 @@ function safe(run: () => void) {
 function tags(payload: SanitizedIncident) {
   return {
     "guardian.component": "imu",
-    "guardian.game": "racing",
+    "guardian.game": payload.game,
     "guardian.failure_type": payload.failureType,
     "guardian.recovery_method": payload.recoveryMethod ?? "none",
     "guardian.recovery_result": payload.recoveryResult ?? "pending",
@@ -55,8 +55,8 @@ function endNamedSpan(name: string) {
   });
 }
 
-export function reportFailure(state: GuardianState) {
-  const payload = sanitizeIncident(state, process.env.NODE_ENV ?? "development");
+export function reportFailure(state: GuardianState, game: GuardianGame = "racing") {
+  const payload = sanitizeIncident(state, process.env.NODE_ENV ?? "development", game);
   if (!payload) return null;
   try {
     assertSanitized(payload);
@@ -90,8 +90,8 @@ export function reportFailure(state: GuardianState) {
   return payload;
 }
 
-export function reportRecovery(state: GuardianState) {
-  const payload = sanitizeIncident(state, process.env.NODE_ENV ?? "development");
+export function reportRecovery(state: GuardianState, game: GuardianGame = "racing") {
+  const payload = sanitizeIncident(state, process.env.NODE_ENV ?? "development", game);
   if (!payload) return null;
   try {
     assertSanitized(payload);
@@ -121,11 +121,11 @@ export function reportSpan(name: "imu.connect" | "imu.healthy_session" | "imu.fa
   else endNamedSpan(name);
 }
 
-export function reportSidekickFailure() {
+export function reportSidekickFailure(game: GuardianGame = "racing") {
   safe(() => {
     Sentry.withScope((scope) => {
       scope.setTag("guardian.component", "imu");
-      scope.setTag("guardian.game", "racing");
+      scope.setTag("guardian.game", game);
       scope.setTag("guardian.failure_type", "sidekick_failure");
       scope.setTag("guardian.source", "real");
       scope.setFingerprint(["rehab-guardian", "sidekick_failure"]);

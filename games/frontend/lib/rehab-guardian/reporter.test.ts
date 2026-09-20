@@ -67,4 +67,12 @@ describe("sentry reporter", () => {
     expect(sentry.captureMessage).toHaveBeenCalledTimes(1);
     expect(String(sentry.captureMessage.mock.calls[0][0])).not.toMatch(/\d+\.\d+,\d+\.\d+/);
   });
+
+  it("tags Zelda incidents as skyward", () => {
+    const payload = sanitizeIncident(incident, "test", "skyward");
+    expect(payload!.game).toBe("skyward");
+    assertSanitized(payload!);
+    reportFailure(incident, "skyward");
+    expect(sentry.captureException).toHaveBeenCalledTimes(1);
+  });
 });

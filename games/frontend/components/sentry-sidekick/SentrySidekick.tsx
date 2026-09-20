@@ -20,6 +20,7 @@ type Props = {
   onCalibrateAsk: () => void;
   calibratePending: boolean;
   onCalibrateConfirm: () => void;
+  fallbackAvailable?: boolean;
 };
 
 function line(text: string) {
@@ -36,7 +37,8 @@ export default function SentrySidekick({
   onIntent,
   onCalibrateAsk,
   calibratePending,
-  onCalibrateConfirm
+  onCalibrateConfirm,
+  fallbackAvailable = true
 }: Props) {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -106,7 +108,7 @@ export default function SentrySidekick({
               <button type="button" onClick={() => onRecovery("wait_for_frames")}>{methods.wait_for_frames}</button>
               <button type="button" onClick={() => onRecovery("reconnect")}>{methods.reconnect}</button>
               <button type="button" onClick={onCalibrateAsk}>{methods.calibrate}</button>
-              <button type="button" onClick={() => onRecovery("hand_cam_fallback")}>{methods.hand_cam_fallback}</button>
+              {fallbackAvailable && <button type="button" onClick={() => onRecovery("hand_cam_fallback")}>{methods.hand_cam_fallback}</button>}
               <button type="button" onClick={() => onRecovery("pause_and_exit")}>{methods.pause_and_exit}</button>
             </div>
           )}

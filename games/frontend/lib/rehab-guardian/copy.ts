@@ -11,37 +11,37 @@ export type SidekickCopy = {
 const FAILURE: Record<FailureType, SidekickCopy> = {
   web_serial_unsupported: {
     title: "This browser can't talk to the sensor",
-    body: "Pulse Circuit needs Chrome or Edge for the IMU. Your progress is saved.",
+    body: "This game needs Chrome or Edge for the IMU. Your progress is saved.",
     question: "Please open the game in Chrome or Edge, then come back."
   },
   port_open_failed: {
     title: "Couldn't open the sensor",
-    body: "The browser couldn't open the ESP32 serial port you selected. Your race is paused.",
+    body: "The browser couldn't open the ESP32 serial port you selected. Your session is paused.",
     question: "Want to try connecting again?"
   },
   unexpected_disconnect: {
     title: "Sensor disconnected",
-    body: "The ESP32 stopped during your race. Your progress is paused, not lost.",
+    body: "The ESP32 stopped during your session. Your progress is paused, not lost.",
     question: "Did you disconnect the sensor intentionally?"
   },
   read_loop_failure: {
     title: "Sensor reading stopped",
-    body: "The live serial reader stopped unexpectedly. Your race is paused.",
+    body: "The live serial reader stopped unexpectedly. Your session is paused.",
     question: "Did you disconnect the sensor intentionally?"
   },
   stale_stream: {
     title: "Sensor updates paused",
-    body: "The connection still looks open, but no valid IMU frame arrived in time. Your race is paused so the car doesn't drift.",
+    body: "The connection still looks open, but no valid IMU frame arrived in time. Your session is paused so the character doesn't drift.",
     question: "What did you notice?"
   },
   persistent_malformed: {
     title: "Sensor packets look mixed up",
-    body: "Several packets in a row were not the expected five-field format. Your race is paused.",
+    body: "Several packets in a row were not the expected five-field format. Your session is paused.",
     question: "What did you notice?"
   },
   invalid_values: {
     title: "Sensor values look invalid",
-    body: "Packets arrived with missing numbers, NaN, or infinity. Your race is paused. No raw readings were stored.",
+    body: "Packets arrived with missing numbers, NaN, or infinity. Your session is paused. No raw readings were stored.",
     question: "What did you notice?"
   },
   frozen_readings: {
@@ -51,7 +51,7 @@ const FAILURE: Record<FailureType, SidekickCopy> = {
   },
   unrealistic_jump: {
     title: "Sensor jumped unexpectedly",
-    body: "A sudden change looked too large to be real motion. Your race is paused. Only the category was recorded, not the raw reading.",
+    body: "A sudden change looked too large to be real motion. Your session is paused. Only the category was recorded, not the raw reading.",
     question: "What did you notice?"
   },
   command_write_failed: {
@@ -113,7 +113,7 @@ export function recoveredCopy(): SidekickCopy {
   return {
     title: "Signal looks stable",
     body: "Valid sensor updates are back.",
-    question: "Does the steering feel right?"
+    question: "Does the controller feel right?"
   };
 }
 

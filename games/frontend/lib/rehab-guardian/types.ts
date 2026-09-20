@@ -151,10 +151,12 @@ export const INITIAL_GUARDIAN_STATE: GuardianState = {
   lastEventAt: 0
 };
 
+export type GuardianGame = "racing" | "skyward";
+
 export type SanitizedIncident = {
   incidentId: string;
   failureType: FailureType;
-  game: "racing";
+  game: GuardianGame;
   component: "imu";
   inputMode: GuardianInputMode;
   source: GuardianSource;
