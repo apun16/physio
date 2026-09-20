@@ -22,11 +22,29 @@ export type SentrySdk = {
   getClient?: () => unknown;
 };
 
+type SentryModule = SentrySdk & { default?: SentryModule };
+
+function nestedDefault(mod: SentryModule): SentryModule | undefined {
+  try {
+    const inner = mod.default;
+    if (!inner || inner === mod) return undefined;
+    return inner;
+  } catch {
+    return undefined;
+  }
+}
+
 function unwrap(): SentrySdk {
-  const mod = SentryNS as SentrySdk & { default?: SentrySdk };
-  if (typeof mod.captureException === "function") return mod;
-  if (mod.default && typeof mod.default.captureException === "function") return mod.default;
-  return mod.default ?? mod;
+  const mod = SentryNS as SentryModule;
+  const inner = nestedDefault(mod);
+  const nested = inner ? nestedDefault(inner) : undefined;
+  const candidates: SentrySdk[] = [mod, inner, nested].filter((sdk): sdk is SentrySdk => Boolean(sdk));
+  return (
+    candidates.find((sdk) => typeof sdk.captureException === "function") ??
+    candidates.find((sdk) => typeof sdk.captureMessage === "function") ??
+    inner ??
+    mod
+  );
 }
 
 /** Browser/server Sentry handle. Re-inits if instrumentation-client never loaded. */
