@@ -1,4 +1,6 @@
-import * as Sentry from "@sentry/nextjs";
+import * as SentryNS from "@sentry/nextjs";
+
+const Sentry = (SentryNS as { default?: typeof SentryNS }).default ?? SentryNS;
 
 export async function register() {
   try {
