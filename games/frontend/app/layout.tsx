@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "PixelVerse",
+  title: "RePlay",
   description: "One portal into endless worlds for all your rehab needs"
 };
 

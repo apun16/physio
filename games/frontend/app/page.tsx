@@ -12,7 +12,7 @@ export default function HomePage() {
       <BootIntro />
       <div className="crt-layer" />
       <header className="world-header">
-        <Link className="home-brand" href="/"><PixelMark /><span>PULSE<b>//VERSE</b></span></Link>
+        <Link className="home-brand" href="/"><PixelMark /><span>Re<b>Play</b></span></Link>
         <nav><Link href="/">HOME</Link><Link href="/dashboard">WORLDS</Link><Link href="/games/steer">PLAY</Link></nav>
       </header>
 
@@ -20,7 +20,7 @@ export default function HomePage() {
         <div className="world-shade" />
         <div className="world-copy">
           <span>WELCOME TO THE</span>
-          <h1><span>PULSE</span><b>//VERSE</b></h1>
+          <h1><span>Re</span><b>Play</b></h1>
           <p>YOUR MOVEMENT OPENS WORLDS</p>
           <Link href="/dashboard">ENTER THE PORTAL <ArrowRight size={17} /></Link>
         </div>

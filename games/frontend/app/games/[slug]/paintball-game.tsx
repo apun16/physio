@@ -141,7 +141,7 @@ export default function PaintballGameView() {
         )}
         {screen === "start" && (
           <div className="paint-card paint-start">
-            <span>PULSEVERSE // WORLD 03</span>
+            <span>REPLAY // WORLD 03</span>
             <h1>INKBURST</h1>
             <p>First-person paintball down a city street. Squeeze, aim, splat.</p>
             <ul className="paint-keys">
