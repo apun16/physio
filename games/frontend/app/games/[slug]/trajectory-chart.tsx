@@ -9,7 +9,11 @@ const H = 220;
 const PAD = 14;
 const RANGE = 1.2; // lateral half-range shown, road units
 
-/** Lateral position over the course: the player's path against the optimal line through every coin. */
+/**
+ * Lateral position over the course: the optimal line through every coin, the
+ * line the controller actually drove, and — when the camera was watching — the
+ * line the hand traced.
+ */
 export default function TrajectoryChart({ report }: { report: TrajectoryReport }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -39,6 +43,7 @@ export default function TrajectoryChart({ report }: { report: TrajectoryReport }
     };
     trace(report.optimal, "#5ef0ff", 3);
     trace(report.actual, "#ffd438", 2);
+    if (report.hand) trace(report.hand.trace, "#ff6ad5", 2);
 
     for (const coin of report.coins) {
       ctx.beginPath();
@@ -49,10 +54,11 @@ export default function TrajectoryChart({ report }: { report: TrajectoryReport }
 
   return (
     <div className="trajectory-chart">
-      <canvas ref={ref} width={W} height={H} role="img" aria-label={`Your path against the optimal path. Average distance from optimal ${Math.round(report.meanError * 100)}% of the road half-width.`} />
+      <canvas ref={ref} width={W} height={H} role="img" aria-label={`Driven and hand paths against the optimal path. Driven line averages ${Math.round(report.meanError * 100)}% of the road half-width from optimal${report.hand ? `, hand line ${Math.round(report.hand.meanError * 100)}%` : ""}.`} />
       <div className="trajectory-legend">
         <span><i className="opt" /> OPTIMAL LINE</span>
-        <span><i className="act" /> YOUR PATH</span>
+        <span><i className="act" /> DRIVEN LINE</span>
+        {report.hand && <span><i className="hand" /> HAND PATH</span>}
         <span><i className="coin" /> COIN HIT</span>
         <span><i className="miss" /> COIN MISSED</span>
       </div>

@@ -22,26 +22,41 @@ function sessionMetrics(s: SessionSummary): Record<string, number> {
 }
 
 export function buildRacingAnalysis(summary: SessionSummary, profile: RehabProfile, path: TrajectoryReport | null, history: SessionSummary[]): AnalysisRequest {
-  const tracked = path !== null && path.handCoverage > 0;
+  // The controller always steers; the camera is an optional observer, so the
+  // driven line is always reported and the hand line only when it was tracked.
+  const hand = path?.hand ?? null;
   return {
     game: "pulse-circuit",
-    input: tracked ? "hand-camera" : "imu",
+    input: hand ? "imu-steered-hand-tracked" : "imu",
     level: profile.level,
     levelLabel: profile.label,
     metrics: {
       ...sessionMetrics(summary),
-      ...(tracked
+      peakRightDeg: summary.peakRightDeg,
+      peakLeftDeg: summary.peakLeftDeg,
+      ...(path
         ? {
-            meanErrorFromOptimalPct: pct(path.meanError),
-            worstErrorFromOptimalPct: pct(path.maxError),
-            bias: Math.round(path.bias * 100) / 100,
-            errorStartPct: pct(path.errorStart),
-            errorEndPct: pct(path.errorEnd),
-            pathLengthVsOptimal: Math.round(path.pathRatio * 10) / 10,
-            verticalWobblePct: pct(path.verticalDrift),
-            handVisiblePct: pct(path.handCoverage)
+            drivenMeanErrorFromOptimalPct: pct(path.meanError),
+            drivenWorstErrorFromOptimalPct: pct(path.maxError),
+            drivenBias: Math.round(path.bias * 100) / 100,
+            drivenErrorStartPct: pct(path.errorStart),
+            drivenErrorEndPct: pct(path.errorEnd),
+            drivenPathLengthVsOptimal: Math.round(path.pathRatio * 10) / 10
           }
-        : { peakRightDeg: summary.peakRightDeg, peakLeftDeg: summary.peakLeftDeg })
+        : {}),
+      ...(hand
+        ? {
+            handMatch0to100: hand.score,
+            handMeanErrorFromOptimalPct: pct(hand.meanError),
+            handWorstErrorFromOptimalPct: pct(hand.maxError),
+            handBias: Math.round(hand.bias * 100) / 100,
+            handErrorStartPct: pct(hand.errorStart),
+            handErrorEndPct: pct(hand.errorEnd),
+            handPathLengthVsOptimal: Math.round(hand.pathRatio * 10) / 10,
+            handVerticalWobblePct: pct(path!.verticalDrift),
+            handVisiblePct: pct(path!.handCoverage)
+          }
+        : {})
     },
     history: history.slice(-5).map((s) => ({ level: s.level, ...sessionMetrics(s) })),
     adjustable: {

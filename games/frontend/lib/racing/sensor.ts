@@ -1,9 +1,12 @@
 /**
  * IMU sensor adapter for the racing game.
  *
- * Reads the line stream from `htn_claude_filter.ino` over Web Serial:
- *   roll,pitch,yaw,steer,move\n   (degrees relative to neutral, steer/move in -1..1)
- * Lines starting with '#' are firmware status text and are ignored.
+ * Reads the line stream from the ESP-32 firmware over Web Serial. Two layouts
+ * are accepted, so either sketch can be flashed:
+ *   htn_claude_filter.ino (5 fields): roll,pitch,yaw,steer,move
+ *   htn_final.ino         (8 fields): roll,pitch,yaw,steer,moveX,moveY,rawFsr,squeeze
+ * Angles are degrees relative to neutral; steer/move/squeeze are normalised -1..1
+ * (squeeze 0..1). Lines starting with '#' are firmware status text and are ignored.
  *
  * The ESP32 shows up as a serial port either over USB or once paired over
  * Bluetooth Classic (e.g. /dev/cu.ESP32_HTN on macOS). Web Serial needs Chrome/Edge.
@@ -14,7 +17,19 @@ export interface SensorFrame {
   pitch: number;
   yaw: number;
   steer: number;
+  /**
+   * Lateral move axis (moveX on the 8-field firmware). This is a cumulative
+   * distance from the last calibration point, not a bounded -1..1 reading, so
+   * it is passed through unclamped; clamping pinned it at 1 and silently froze
+   * the signal after about one sweep.
+   */
   move: number;
+  /** vertical move axis, 8-field firmware only; cumulative like move. */
+  moveY: number | null;
+  /** force sensor, normalised 0..1; 8-field firmware only */
+  squeeze: number | null;
+  /** raw force sensor ADC count, 8-field firmware only */
+  rawFsr: number | null;
   /** performance.now() when the frame arrived */
   t: number;
 }
@@ -60,14 +75,34 @@ export function sensorLog(message: string) {
   fetch("/api/sensor-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message }), keepalive: true }).catch(() => undefined);
 }
 
+const clamp1 = (value: number) => Math.max(-1, Math.min(1, value));
+/**
+ * Squeeze arrives as 0..1 from the firmware, but the game-facing mapping is the
+ * 0..255 byte (see the squeeze_255 line in full.py). Accept either: anything
+ * above 1 is treated as the byte scale and brought back to 0..1.
+ */
+const normSqueeze = (value: number) => (value > 1.5 ? value / 255 : value);
+
 export function parseFrame(line: string, t: number): SensorFrame | null {
   const text = line.trim();
   if (!text || text.startsWith("#")) return null;
   const parts = text.split(",");
-  if (parts.length !== 5) return null;
-  const [roll, pitch, yaw, steer, move] = parts.map(Number);
-  if ([roll, pitch, yaw, steer, move].some((value) => !Number.isFinite(value))) return null;
-  return { roll, pitch, yaw, steer: Math.max(-1, Math.min(1, steer)), move: Math.max(-1, Math.min(1, move)), t };
+  // 5 = htn_claude_filter.ino, 8 = htn_final.ino (adds moveY, force sensor).
+  if (parts.length !== 5 && parts.length !== 8) return null;
+  const values = parts.map(Number);
+  if (values.some((value) => !Number.isFinite(value))) return null;
+  const [roll, pitch, yaw, steer, move, moveY, rawFsr, squeeze] = values;
+  return {
+    roll,
+    pitch,
+    yaw,
+    steer: clamp1(steer),
+    move,
+    moveY: parts.length === 8 ? moveY : null,
+    squeeze: parts.length === 8 ? Math.max(0, Math.min(1, normSqueeze(squeeze))) : null,
+    rawFsr: parts.length === 8 ? rawFsr : null,
+    t
+  };
 }
 
 /** Classifies a rejected line without exposing the raw packet. */
@@ -76,7 +111,7 @@ export function classifyRejectedLine(line: string): "empty" | "status" | "wrong_
   if (!text) return "empty";
   if (text.startsWith("#")) return "status";
   const parts = text.split(",");
-  if (parts.length !== 5) return "wrong_field_count";
+  if (parts.length !== 5 && parts.length !== 8) return "wrong_field_count";
   if (parts.map(Number).some((value) => !Number.isFinite(value))) return "non_finite";
   return "valid";
 }

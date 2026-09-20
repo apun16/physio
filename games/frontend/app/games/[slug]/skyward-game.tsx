@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowLeft, RotateCcw } from "lucide-react";
+import { ArrowLeft, Bluetooth, Play, RotateCcw } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { loadSkywardAssets, type SkywardAssets } from "@/lib/skyward/assets";
-import { DebugInputProvider } from "@/lib/skyward/input";
+import { DebugInputProvider, IMUInputProvider } from "@/lib/skyward/input";
+import { SerialSensor } from "@/lib/racing/sensor";
 import { drawSkyward, HEIGHT, WIDTH } from "@/lib/skyward/render";
 import { ENCOUNTERS } from "@/lib/skyward/encounters";
 import { JourneyState } from "@/lib/skyward/state";
@@ -16,6 +17,12 @@ const formatTime = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Ma
 export default function SkywardGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const resetRef = useRef(0);
+  const [sensor] = useState(() => new SerialSensor());
+  const sensorStatus = useSyncExternalStore(
+    (notify) => sensor.subscribe(notify),
+    () => sensor.status,
+    () => "disconnected" as const
+  );
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState("");
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -31,7 +38,10 @@ export default function SkywardGame() {
     let state = new JourneyState();
     let summaryShown = false;
     let previousReset = resetRef.current;
+    // Keyboard stays available for testing; the controller is layered on top and
+    // polled last so its aim and shield state win when it is live.
     const input = new DebugInputProvider();
+    const imu = new IMUInputProvider(sensor);
     input.attach(canvas);
     canvas.tabIndex = 0;
     canvas.focus();
@@ -65,7 +75,7 @@ export default function SkywardGame() {
         setSummary(null);
       }
       if (assets) {
-        state.apply(input.poll());
+        state.apply([...input.poll(), ...imu.poll()]);
         state.update(dt);
         drawSkyward(context, state, assets, true);
         const over = state.phase === "complete" || state.phase === "dead";
@@ -88,9 +98,14 @@ export default function SkywardGame() {
       running = false;
       cancelAnimationFrame(animation);
       input.detach();
+      void sensor.disconnect();
       window.removeEventListener("keydown", onKey);
     };
-  }, []);
+  }, [sensor]);
+
+  const sensorConnected = sensorStatus === "connected";
+  const [dismissedConnect, setDismissedConnect] = useState(false);
+  const showConnect = !sensorConnected && !dismissedConnect && sensorStatus !== "unsupported";
 
   return (
     <main className="race-page skyward-page">
@@ -99,6 +114,11 @@ export default function SkywardGame() {
         <Link href="/dashboard"><ArrowLeft size={16} /> QUEST HUB</Link>
         <div><span>SKYWARD JOURNEY</span><b>WORLD 01</b></div>
         <div className="race-header-actions">
+          {sensorStatus !== "unsupported" && (
+            <button onClick={() => (sensorConnected ? sensor.disconnect() : sensor.connect())} aria-label={sensorConnected ? "Disconnect controller" : "Connect controller"}>
+              <Bluetooth size={15} /><span>{sensorConnected ? "CONTROLLER ON" : sensorStatus === "connecting" ? "CONNECTING" : "CONNECT"}</span>
+            </button>
+          )}
           <button onClick={() => { resetRef.current += 1; }} aria-label="Reset journey">
             <RotateCcw size={15} /><span>RESET</span>
           </button>
@@ -122,14 +142,25 @@ export default function SkywardGame() {
             </div>
           </div>
         )}
+        {showConnect && ready && !failed && (
+          <div className="skyward-connect" role="dialog" aria-label="Connect your controller">
+            <span>SKYWARD JOURNEY</span>
+            <h1>Connect your controller</h1>
+            <p>Squeeze to draw the bow, then let go to loose the arrow. Sweep your hand sideways to slash.</p>
+            <button className="go" onClick={() => void sensor.connect()}>
+              <Play size={16} /> {sensorStatus === "connecting" ? "CONNECTING…" : "CONNECT CONTROLLER"}
+            </button>
+            <button className="skip" onClick={() => setDismissedConnect(true)}>PLAY WITH KEYBOARD</button>
+            {sensor.error && <small>{sensor.error}</small>}
+          </div>
+        )}
         {failed && <p className="skyward-status">{failed}</p>}
         {!ready && !failed && <p className="skyward-status">Calibrating session...</p>}
       </section>
       <footer className="race-footer">
-        <span><i className="key">J</i><i className="key">K</i><i className="key">L</i> SLASH</span>
-        <span><i className="key">F</i> SHIELD</span>
-        <span><i className="key">E</i> BOW</span>
-        <b><i /> IMU SLOT OPEN — DEBUG INPUT ONLY</b>
+        <span>SQUEEZE &amp; RELEASE — BOW</span>
+        <span>SWEEP SIDEWAYS — SLASH</span>
+        <b className={sensorConnected ? "" : "idle"}><i /> {sensorConnected ? "CONTROLLER LIVE" : sensorStatus === "unsupported" ? "USE CHROME OR EDGE" : "CONTROLLER NOT CONNECTED — J/K/L, E"}</b>
       </footer>
     </main>
   );
