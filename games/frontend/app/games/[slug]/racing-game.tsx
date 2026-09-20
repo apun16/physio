@@ -73,6 +73,9 @@ export default function RacingGame() {
     profileRef.current = saved;
     setProfile(saved);
     tracker.attach(videoRef.current, overlayRef.current);
+    // The camera runs alongside the race from the start: it asks for access, then
+    // models the hand trajectory for the end-of-run report. It never steers.
+    void tracker.start();
     return () => { void sensor.disconnect(); tracker.stop(); };
   }, [sensor, tracker]);
 
@@ -419,8 +422,9 @@ export default function RacingGame() {
 
   const startRace = () => {
     sensorLog(`START pressed: controller=${sensorStatus} camera=${cameraStatus} live=${sensor.isLive(performance.now())}`);
-    // The controller drives, so it gates the start. The camera is optional:
-    // without it the race still runs, it just has no hand trajectory to score.
+    // Give the camera another chance to come up if it was denied or stopped, but
+    // never block on it: the controller drives, so only the controller gates the start.
+    if (cameraStatus === "off") void tracker.start();
     if (sensorStatus !== "connected") {
       void sensor.connect();
       return;
