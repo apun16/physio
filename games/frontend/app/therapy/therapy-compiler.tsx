@@ -43,8 +43,8 @@ function displayValue(value: unknown, key: keyof ExercisePlan) {
 
 export default function TherapyCompiler() {
   const router = useRouter();
-  const [text, setText] = useState("");
-  const [source, setSource] = useState({ fileName: "pasted-note.txt", mimeType: "text/plain", note: "Pasted by patient" });
+  const [text, setText] = useState(therapyNoteFixtures[0]?.text ?? "");
+  const [source, setSource] = useState(therapyNoteFixtures[0]?.metadata ?? { fileName: "pasted-note.txt", mimeType: "text/plain", note: "Pasted by patient" });
   const [stage, setStage] = useState<"intake" | "working" | "review">("intake");
   const [progress, setProgress] = useState({ stage: "", progress: 0 });
   const [result, setResult] = useState<Result | null>(null);
@@ -106,8 +106,12 @@ export default function TherapyCompiler() {
 
   function launchGame() {
     if (!result?.gameSpec) return;
-    sessionStorage.setItem("therapy-game-spec", JSON.stringify(result.gameSpec));
-    sessionStorage.setItem("therapy-agent-session", result.sessionId);
+    try {
+      sessionStorage.setItem("therapy-game-spec", JSON.stringify(result.gameSpec));
+      sessionStorage.setItem("therapy-agent-session", result.sessionId);
+    } catch {
+      /* launch still works with the play-page demo spec if storage is blocked */
+    }
     router.push("/therapy/play");
   }
 
@@ -120,7 +124,7 @@ export default function TherapyCompiler() {
       </header>
 
       <section className={styles.hero}>
-        <span>ROX // PATIENT MODE</span>
+        <span>WE // PATIENT MODE</span>
         <h1>TURN YOUR THERAPY NOTE<br /><b>INTO A GAME</b></h1>
         <p>Upload the instructions from your therapist. We will organize them, ask about anything unclear, and build a camera-controlled game without changing your treatment.</p>
       </section>
@@ -153,7 +157,7 @@ export default function TherapyCompiler() {
       {stage === "working" && (
         <section className={styles.working}>
           <div><LoaderCircle size={34} /><i style={{ width: `${Math.round(progress.progress * 100)}%` }} /></div>
-          <span>ROX AGENT IS RUNNING</span>
+          <span>WE ARE READING YOUR NOTE</span>
           <h2>{progress.stage || "Calling compiler tools"}</h2>
           <p>extract_exercise_claims, find_conflicts, validate_plan, then ask_clarification or generate_game_spec. Medical instructions are never filled in by guesswork.</p>
         </section>
@@ -162,7 +166,7 @@ export default function TherapyCompiler() {
       {stage === "review" && result && (
         <section className={styles.review}>
           <div className={styles.reviewTop}>
-            <div className={styles.sectionTitle}><span>02</span><div><small>REVIEW</small><h2>What Rox found</h2></div></div>
+            <div className={styles.sectionTitle}><span>02</span><div><small>REVIEW</small><h2>What we found</h2></div></div>
             <button onClick={() => { setStage("intake"); setResult(null); }}><ArrowLeft size={14} /> USE ANOTHER NOTE</button>
           </div>
 
@@ -190,7 +194,7 @@ export default function TherapyCompiler() {
           {result.plan.status === "needs_clarification" ? (
             <div className={styles.clarification}>
               <AlertTriangle size={23} />
-              <div><span>NEEDS CLARIFICATION</span><h2>{result.plan.clarificationQuestion}</h2><p>Rox will not create a game until the therapist’s instruction is clear.</p></div>
+              <div><span>NEEDS CLARIFICATION</span><h2>{result.plan.clarificationQuestion}</h2><p>We will not create a game until the therapist’s instruction is clear.</p></div>
               <div><input value={answer} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void answerClarification(); }} placeholder="Type the therapist-provided answer" /><button onClick={() => void answerClarification()}>SUBMIT <ArrowRight size={14} /></button></div>
             </div>
           ) : (
@@ -227,7 +231,7 @@ export default function TherapyCompiler() {
         </section>
       )}
 
-      <footer className={styles.footer}><ShieldCheck size={14} /> Rox transforms therapist instructions into gameplay. It does not diagnose, prescribe, or change treatment.</footer>
+      <footer className={styles.footer}><ShieldCheck size={14} /> We transform therapist instructions into gameplay. We do not diagnose, prescribe, or change treatment.</footer>
     </main>
   );
 }
