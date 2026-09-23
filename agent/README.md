@@ -1,6 +1,6 @@
 # TherapyGameAgent
 
-This Worker hosts Rox's durable, session-scoped therapy compiler. `TherapyGameAgent` uses the OpenAI Responses API and validated tools to turn therapist-authored notes into constrained `ExercisePlan` and `GameSpec` data. WebSockets carry structured confidence/session events; raw video is never accepted or persisted. `TherapySessionSummaryWorkflow` validates and records completion summaries.
+This Worker hosts the durable, session-scoped therapy compiler. `TherapyGameAgent` uses the OpenAI Responses API and validated tools to turn therapist-authored notes into constrained `ExercisePlan` and `GameSpec` data. WebSockets carry structured confidence/session events; raw video is never accepted or persisted. `TherapySessionSummaryWorkflow` validates and records completion summaries.
 
 Configure `OPENAI_API_KEY` with `wrangler secret put OPENAI_API_KEY`. The original starter chat agent remains available while the therapy route is integrated.
 

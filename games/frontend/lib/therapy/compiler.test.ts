@@ -95,7 +95,7 @@ describe("GameSpec validation", () => {
   });
 });
 
-describe("Rox tool loop", () => {
+describe("therapy tool loop", () => {
   it("exposes extract, conflict, validate, and generate steps", () => {
     const result = compileWithLocalTools(clearShoulderNote.text);
     expect(result.provider).toBe("local-safe-demo");

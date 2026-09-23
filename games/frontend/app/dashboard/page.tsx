@@ -118,7 +118,7 @@ export default function DashboardPage() {
           <aside className="portal-dashboard-rail">
             <Link className="portal-therapy-link" href="/therapy">
               <HeartPulse size={19} />
-              <span><small>ROX THERAPY</small><b>CREATE FROM YOUR NOTE</b></span>
+              <span><small>THERAPY</small><b>CREATE FROM YOUR NOTE</b></span>
               <ArrowRight size={14} />
             </Link>
             <section className="portal-rail-heading"><span>JOURNEY</span><b>Alex Morgan</b><small>Explorer · Level 08</small></section>

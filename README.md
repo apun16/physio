@@ -104,7 +104,7 @@ npm run dev
 
 Open `/games/move`. Combat tester (not walking): `J/K/L` slash, `F` shield, `E` bow.
 
-## Rox Therapy Game Compiler
+## Therapy Game Compiler
 
 The patient-facing compiler lives at `/therapy`. It accepts pasted text, images, and PDFs, extracts text in the browser where possible, and uses OCR for image or scanned-document fallback. The review screen shows every exercise claim with its source snippet and confidence before a game can be created.
 
@@ -148,7 +148,7 @@ The Agent uses the OpenAI Responses API with validated tool calls for claim extr
 
 ### Safety limits
 
-- Rox transforms therapist-provided instructions; it does not diagnose, prescribe, increase range, increase repetitions, or change treatment.
+- We transform therapist-provided instructions; we do not diagnose, prescribe, increase range, increase repetitions, or change treatment.
 - Missing or conflicting required details block game launch.
 - Raw camera video and landmarks remain in the browser by default. Only structured movement metrics and confidence events may be sent to the Agent.
 - A repetition is never scored below the GameSpec confidence threshold.

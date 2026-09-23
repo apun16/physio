@@ -149,7 +149,7 @@ export default function TherapyGame() {
     <main className={styles.page}>
       <header className={styles.header}>
         <Link href="/therapy"><ArrowLeft size={14} /> THERAPY PLAN</Link>
-        <div><span>ROX GENERATED</span><b>{spec.title}</b></div>
+        <div><span>WE GENERATED</span><b>{spec.title}</b></div>
         <span>SET {setNumber}/{spec.exercise.sets} · REP {repNumber}/{spec.exercise.repetitions}</span>
       </header>
 

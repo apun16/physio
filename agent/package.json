@@ -2,7 +2,7 @@
   "name": "therapy-game-agent",
   "version": "1.0.0",
   "private": true,
-  "description": "Cloudflare TherapyGameAgent for Rox therapy game compilation",
+  "description": "Cloudflare TherapyGameAgent for therapy game compilation",
   "keywords": [
     "agents",
     "ai",
