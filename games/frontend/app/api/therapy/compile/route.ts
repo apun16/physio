@@ -32,7 +32,8 @@ export async function POST(request: Request) {
       const response = await fetch(`${origin.replace(/\/$/, "")}/agents/therapy-game-agent/${sessionId}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "compile", text, metadata })
+        body: JSON.stringify({ type: "compile", text, metadata }),
+        signal: AbortSignal.timeout(process.env.THERAPY_AGENT_URL ? 20_000 : 2500)
       });
       const payload = await response.json() as { error?: string; sessionId?: string; plan?: unknown; gameSpec?: unknown; steps?: never[] };
       if (!response.ok) throw new Error(payload.error ?? "Therapy agent compilation failed");
