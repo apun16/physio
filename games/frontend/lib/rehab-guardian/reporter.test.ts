@@ -4,6 +4,8 @@ const sentry = vi.hoisted(() => ({
   captureException: vi.fn(),
   captureMessage: vi.fn(),
   addBreadcrumb: vi.fn(),
+  getClient: vi.fn(() => ({})),
+  init: vi.fn(),
   withScope: vi.fn((fn: (scope: { setTag: ReturnType<typeof vi.fn>; setFingerprint: ReturnType<typeof vi.fn>; setContext: ReturnType<typeof vi.fn> }) => void) => {
     fn({ setTag: vi.fn(), setFingerprint: vi.fn(), setContext: vi.fn() });
   }),
@@ -11,7 +13,10 @@ const sentry = vi.hoisted(() => ({
   setMeasurement: vi.fn()
 }));
 
-vi.mock("@sentry/nextjs", () => sentry);
+vi.mock("@sentry/nextjs", () => ({
+  ...sentry,
+  default: sentry
+}));
 
 import { createGuardian } from "./machine";
 import { assertSanitized, sanitizeIncident } from "./privacy";
@@ -68,11 +73,35 @@ describe("sentry reporter", () => {
     expect(String(sentry.captureMessage.mock.calls[0][0])).not.toMatch(/\d+\.\d+,\d+\.\d+/);
   });
 
+  it("does not drop an incident id that happens to contain a forbidden substring", () => {
+    const payload = sanitizeIncident({ ...incident, incidentId: "rg_move_name_1" }, "development");
+    expect(payload).toBeTruthy();
+    expect(() => assertSanitized(payload!)).not.toThrow();
+  });
+
   it("tags Zelda incidents as skyward", () => {
     const payload = sanitizeIncident(incident, "test", "skyward");
     expect(payload!.game).toBe("skyward");
     assertSanitized(payload!);
     reportFailure(incident, "skyward");
     expect(sentry.captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries if the first capture fails, and No can force a resend", () => {
+    sentry.captureException.mockImplementation(() => {
+      throw new Error("sdk down");
+    });
+    sentry.captureMessage.mockImplementation(() => {
+      throw new Error("msg down");
+    });
+    reportFailure(incident);
+    expect(sentry.captureException).toHaveBeenCalledTimes(1);
+    reportFailure(incident);
+    expect(sentry.captureException).toHaveBeenCalledTimes(2);
+
+    sentry.captureException.mockImplementation(() => "event-id");
+    sentry.captureMessage.mockImplementation(() => undefined);
+    reportFailure(incident, "racing", { force: true });
+    expect(sentry.captureException).toHaveBeenCalledTimes(3);
   });
 });

@@ -17,6 +17,8 @@ function toGuardian(event: SensorReliabilityEvent): GuardianEvent | null {
       return { type: "invalid_values", at: event.at };
     case "frozen_readings":
       return { type: "frozen_readings", at: event.at };
+    case "imu_unplugged":
+      return { type: "imu_unplugged", at: event.at };
     case "unrealistic_jump":
       return { type: "unrealistic_jump", at: event.at };
     case "command_write_failed":
@@ -50,16 +52,13 @@ function toGuardian(event: SensorReliabilityEvent): GuardianEvent | null {
 export function watchSensor(
   sensor: SensorWatchTarget,
   dispatch: (event: GuardianEvent) => void,
-  options: { getInputMode?: () => "imu" | "hand"; getEnded?: () => boolean; intervalMs?: number } = {}
+  options: { getInputMode?: () => "imu" | "hand"; intervalMs?: number } = {}
 ) {
   let staleSent = false;
   let stopped = false;
 
   const unsub = sensor.subscribeReliability((event) => {
     if (stopped) return;
-    if (options.getEnded?.()) {
-      if (event.kind === "unexpected_disconnect" || event.kind === "read_loop_failure" || event.kind === "intentionally_disconnected") return;
-    }
     const mapped = toGuardian(event);
     if (mapped) {
       try {
@@ -77,7 +76,7 @@ export function watchSensor(
   const intervalMs = options.intervalMs ?? 200;
   const timer = setInterval(() => {
     if (stopped) return;
-    if (options.getEnded?.() || options.getInputMode?.() === "hand") {
+    if (options.getInputMode?.() === "hand") {
       staleSent = false;
       return;
     }
@@ -90,7 +89,7 @@ export function watchSensor(
         if (elapsed >= STALE_AFTER_MS) dispatch({ type: "stream_stale", msSinceLastValid: elapsed, at: now });
       }
     } else if (live) {
-      if (staleSent) dispatch({ type: "frames_stable" });
+      dispatch({ type: "frames_stable" });
       staleSent = false;
     }
   }, intervalMs);

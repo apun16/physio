@@ -1,8 +1,10 @@
-import * as Sentry from "@sentry/nextjs";
+import * as SentryNS from "@sentry/nextjs";
+
+const Sentry = (SentryNS as { default?: typeof SentryNS }).default ?? SentryNS;
 
 const dsn = process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN;
 
-if (dsn) {
+if (dsn && typeof Sentry.init === "function") {
   Sentry.init({
     dsn,
     sendDefaultPii: false,

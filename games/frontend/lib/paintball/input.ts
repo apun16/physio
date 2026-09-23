@@ -1,4 +1,5 @@
 import type { AimSample, ImuSample, InputMode, SqueezePhase } from "./types";
+import type { HardwareMove } from "./hardware";
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -94,6 +95,8 @@ export class InputManager {
   allowCapture: () => boolean = () => true;
   /** Set by the game: fired when the cursor is released (Esc, alt-tab, focus loss). */
   onLockLost: (() => void) | null = null;
+  /** Set by the game: the controller's movement and trigger for this frame. */
+  hardware: (dt: number) => HardwareMove = () => ({ forward: 0, strafe: 0, fired: false, live: false });
   private element: HTMLElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private clicked = false;
@@ -208,10 +211,18 @@ export class InputManager {
     this.keys.delete(event.key.toLowerCase());
   };
 
-  poll(_dt: number) {
-    const forward = (this.keys.has("arrowup") || this.keys.has("w") ? 1 : 0) - (this.keys.has("arrowdown") || this.keys.has("s") ? 1 : 0);
-    const strafe = (this.keys.has("arrowright") || this.keys.has("d") ? 1 : 0) - (this.keys.has("arrowleft") || this.keys.has("a") ? 1 : 0);
-    const fired = this.clicked;
+  poll(dt: number) {
+    const keyForward = (this.keys.has("arrowup") || this.keys.has("w") ? 1 : 0) - (this.keys.has("arrowdown") || this.keys.has("s") ? 1 : 0);
+    const keyStrafe = (this.keys.has("arrowright") || this.keys.has("d") ? 1 : 0) - (this.keys.has("arrowleft") || this.keys.has("a") ? 1 : 0);
+
+    // The controller and the keyboard both feed the same axes. Whichever is
+    // pushed further wins, so plugging in the hardware never disables the keys.
+    const pad = this.hardware(dt);
+    const pick = (key: number, hw: number) => (Math.abs(hw) > Math.abs(key) ? hw : key);
+    const forward = clamp(pick(keyForward, pad.forward), -1, 1);
+    const strafe = clamp(pick(keyStrafe, pad.strafe), -1, 1);
+
+    const fired = this.clicked || pad.fired;
     this.clicked = false;
     return {
       aim: { x: this.yaw, y: this.pitch },
@@ -222,7 +233,8 @@ export class InputManager {
       squeezeValue: 0,
       forward,
       strafe,
-      locked: this.locked
+      locked: this.locked,
+      hardwareLive: pad.live
     };
   }
 }

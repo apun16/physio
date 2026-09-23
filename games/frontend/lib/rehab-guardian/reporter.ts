@@ -1,19 +1,11 @@
-import * as Sentry from "@sentry/nextjs";
 import type { GuardianGame, GuardianPhase, GuardianState, SanitizedIncident } from "./types";
 import { assertSanitized, sanitizeIncident } from "./privacy";
+import { sentrySdk, type GuardianScope } from "./sentry-sdk";
 
 const RATE_MS = 12_000;
 const lastFailureAt = new Map<string, number>();
 const reportedIncidents = new Set<string>();
 const openSpans = new Map<string, { end: () => void }>();
-
-function safe(run: () => void) {
-  try {
-    run();
-  } catch {
-    // Guardian reporting must fail closed.
-  }
-}
 
 function tags(payload: SanitizedIncident) {
   return {
@@ -28,34 +20,102 @@ function tags(payload: SanitizedIncident) {
   };
 }
 
+function applyTags(scope: GuardianScope, payload: SanitizedIncident) {
+  for (const [tag, value] of Object.entries(tags(payload))) scope.setTag(tag, value);
+}
+
+function sendException(message: string, payload: SanitizedIncident, fingerprint: string[]): boolean {
+  const sentry = sentrySdk();
+  const captureEx = sentry.captureException;
+  const captureMsg = sentry.captureMessage;
+  if (typeof captureEx !== "function" && typeof captureMsg !== "function") {
+    console.warn("[rehab-guardian] Sentry capture is not available; IMU incident not sent:", message);
+    return false;
+  }
+  const error = new Error(message);
+  const capture = () => {
+    if (typeof captureEx === "function") return captureEx(error);
+    return captureMsg?.(message, "error");
+  };
+  const decorate = (scope: GuardianScope) => {
+    applyTags(scope, payload);
+    scope.setFingerprint(fingerprint);
+    scope.setContext("rehab_guardian", payload);
+  };
+  try {
+    if (typeof sentry.withScope === "function") {
+      sentry.withScope((scope) => {
+        try {
+          decorate(scope);
+        } catch {
+          // still capture the exception
+        }
+        capture();
+      });
+    } else {
+      capture();
+    }
+    console.info("[rehab-guardian] sent to Sentry:", message);
+    return true;
+  } catch (err) {
+    console.warn("[rehab-guardian] Sentry send failed:", err);
+    try {
+      captureMsg?.(message, "error");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function sendMessage(message: string, payload: SanitizedIncident, level: "info" | "warning") {
+  const sentry = sentrySdk();
+  if (typeof sentry.captureMessage !== "function") return;
+  if (typeof sentry.withScope === "function") {
+    sentry.withScope((scope) => {
+      applyTags(scope, payload);
+      scope.setFingerprint(["rehab-guardian-recovery", payload.failureType]);
+      scope.setContext("rehab_guardian", payload);
+      sentry.captureMessage?.(message, level);
+    });
+  } else {
+    sentry.captureMessage(message, level);
+  }
+}
+
 export function breadcrumbTransition(from: GuardianPhase, to: GuardianPhase, source: GuardianState["source"]) {
   if (from === to) return;
-  safe(() => {
-    Sentry.addBreadcrumb({
-      category: "rehab-guardian",
-      message: `${from} -> ${to}`,
-      level: "info",
-      data: { source }
-    });
+  const sentry = sentrySdk();
+  sentry.addBreadcrumb?.({
+    category: "rehab-guardian",
+    message: `${from} -> ${to}`,
+    level: "info",
+    data: { source }
   });
 }
 
 function startNamedSpan(name: string) {
-  safe(() => {
+  const sentry = sentrySdk();
+  if (typeof sentry.startInactiveSpan !== "function") return;
+  try {
     openSpans.get(name)?.end();
-    const span = Sentry.startInactiveSpan({ name, op: "imu" });
+    const span = sentry.startInactiveSpan({ name, op: "imu" });
     if (span) openSpans.set(name, span);
-  });
+  } catch {
+    // spans are optional
+  }
 }
 
 function endNamedSpan(name: string) {
-  safe(() => {
+  try {
     openSpans.get(name)?.end();
     openSpans.delete(name);
-  });
+  } catch {
+    // spans are optional
+  }
 }
 
-export function reportFailure(state: GuardianState, game: GuardianGame = "racing") {
+export function reportFailure(state: GuardianState, game: GuardianGame = "racing", opts: { force?: boolean } = {}) {
   const payload = sanitizeIncident(state, process.env.NODE_ENV ?? "development", game);
   if (!payload) return null;
   try {
@@ -67,26 +127,28 @@ export function reportFailure(state: GuardianState, game: GuardianGame = "racing
   const key = `${payload.failureType}:${payload.source}`;
   const now = Date.now();
   const last = lastFailureAt.get(key) ?? 0;
-  if (reportedIncidents.has(payload.incidentId) || now - last < RATE_MS && lastFailureAt.has(key)) {
+  if (!opts.force && (reportedIncidents.has(payload.incidentId) || (now - last < RATE_MS && lastFailureAt.has(key)))) {
     lastFailureAt.set(key, now);
     return payload;
   }
+
+  const sent = sendException(`Rehab Guardian: ${payload.failureType}`, payload, ["rehab-guardian", payload.failureType]);
+  if (!sent) return payload;
+
   lastFailureAt.set(key, now);
   reportedIncidents.add(payload.incidentId);
-
-  safe(() => {
-    startNamedSpan("imu.failure_detected");
-    if (typeof payload.msSinceLastValid === "number") {
-      Sentry.setMeasurement("imu.ms_since_last_valid", payload.msSinceLastValid, "millisecond");
+  const sentry = sentrySdk();
+  if (typeof sentry.setMeasurement === "function") {
+    try {
+      if (typeof payload.msSinceLastValid === "number") {
+        sentry.setMeasurement("imu.ms_since_last_valid", payload.msSinceLastValid, "millisecond");
+      }
+      sentry.setMeasurement("imu.malformed_count", payload.malformedCount, "none");
+    } catch {
+      // measurements are optional
     }
-    Sentry.setMeasurement("imu.malformed_count", payload.malformedCount, "none");
-    Sentry.withScope((scope) => {
-      for (const [tag, value] of Object.entries(tags(payload))) scope.setTag(tag, value);
-      scope.setFingerprint(["rehab-guardian", payload.failureType, payload.incidentId]);
-      scope.setContext("rehab_guardian", payload);
-      Sentry.captureException(new Error(`Rehab Guardian: ${payload.failureType}`));
-    });
-  });
+  }
+  startNamedSpan("imu.failure_detected");
   return payload;
 }
 
@@ -98,21 +160,14 @@ export function reportRecovery(state: GuardianState, game: GuardianGame = "racin
   } catch {
     return null;
   }
-  safe(() => {
-    if (payload.recoveryResult === "success") {
-      endNamedSpan("imu.recovery");
-      endNamedSpan("imu.failure_detected");
-      startNamedSpan("imu.healthy_session");
-    } else {
-      endNamedSpan("imu.recovery");
-    }
-    Sentry.withScope((scope) => {
-      for (const [tag, value] of Object.entries(tags(payload))) scope.setTag(tag, value);
-      scope.setFingerprint(["rehab-guardian-recovery", payload.incidentId]);
-      scope.setContext("rehab_guardian", payload);
-      Sentry.captureMessage(`Rehab Guardian recovery: ${payload.recoveryResult ?? "pending"}`, payload.recoveryResult === "success" ? "info" : "warning");
-    });
-  });
+  if (payload.recoveryResult === "success") {
+    endNamedSpan("imu.recovery");
+    endNamedSpan("imu.failure_detected");
+    startNamedSpan("imu.healthy_session");
+  } else {
+    endNamedSpan("imu.recovery");
+  }
+  sendMessage(`Rehab Guardian recovery: ${payload.recoveryResult ?? "pending"}`, payload, payload.recoveryResult === "success" ? "info" : "warning");
   return payload;
 }
 
@@ -122,16 +177,17 @@ export function reportSpan(name: "imu.connect" | "imu.healthy_session" | "imu.fa
 }
 
 export function reportSidekickFailure(game: GuardianGame = "racing") {
-  safe(() => {
-    Sentry.withScope((scope) => {
+  const sentry = sentrySdk();
+  if (typeof sentry.withScope === "function") {
+    sentry.withScope((scope) => {
       scope.setTag("guardian.component", "imu");
       scope.setTag("guardian.game", game);
       scope.setTag("guardian.failure_type", "sidekick_failure");
-      scope.setTag("guardian.source", "real");
-      scope.setFingerprint(["rehab-guardian", "sidekick_failure"]);
-      Sentry.captureMessage("Rehab Guardian: sidekick_failure", "warning");
+      sentry.captureMessage?.("Rehab Guardian: sidekick_failure", "warning");
     });
-  });
+    return;
+  }
+  sentry.captureMessage?.("Rehab Guardian: sidekick_failure", "warning");
 }
 
 export function resetReporterForTests() {

@@ -1,4 +1,5 @@
-import { attachAgentSteps, compileWithLocalTools } from "../../../../lib/therapy/agent-compile";
+import { attachAgentSteps, compileWithLocalTools, type CompileResult } from "../../../../lib/therapy/agent-compile";
+import { focusNote, type RerankOutcome } from "../../../../lib/therapy/rerank";
 
 function agentOrigins() {
   if (process.env.THERAPY_AGENT_URL) return [process.env.THERAPY_AGENT_URL];
@@ -11,6 +12,16 @@ function agentOrigins() {
   ];
 }
 
+/** Record the retrieval pass on the response so the UI can show what was read. */
+function withRetrieval(result: CompileResult, focus: RerankOutcome) {
+  if (!focus.applied) return { ...result, retrieval: focus };
+  return {
+    ...result,
+    provider: `${result.provider} · cohere ${focus.model} kept ${focus.kept}/${focus.total}`,
+    retrieval: focus
+  };
+}
+
 export async function POST(request: Request) {
   const bodyText = await request.text();
   if (bodyText.length > 50_000) return Response.json({ error: "Note is too large" }, { status: 413 });
@@ -20,12 +31,18 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ error: "Invalid request" }, { status: 400 });
   }
-  const text = body.text?.trim();
-  if (!text) return Response.json({ error: "No exercise note text was provided" }, { status: 400 });
+  const rawText = body.text?.trim();
+  if (!rawText) return Response.json({ error: "No exercise note text was provided" }, { status: 400 });
 
   const sessionId = body.sessionId ?? crypto.randomUUID();
   const metadata = body.metadata ?? {};
   let lastError: unknown;
+
+  // Rank the note's sections and keep the ones that actually describe the
+  // prescription. Runs server side so the Cohere key never reaches the browser,
+  // and falls through to the full note whenever it cannot help.
+  const focus = await focusNote(rawText);
+  const text = focus.text;
 
   for (const origin of agentOrigins()) {
     try {
@@ -37,13 +54,14 @@ export async function POST(request: Request) {
       });
       const payload = await response.json() as { error?: string; sessionId?: string; plan?: unknown; gameSpec?: unknown; steps?: never[] };
       if (!response.ok) throw new Error(payload.error ?? "Therapy agent compilation failed");
-      return Response.json({ ...attachAgentSteps({ ...payload, provider: "therapy-game-agent" }), sessionId: payload.sessionId ?? sessionId });
+      const compiled = attachAgentSteps({ ...payload, provider: "therapy-game-agent" });
+      return Response.json({ ...withRetrieval(compiled, focus), sessionId: payload.sessionId ?? sessionId });
     } catch (error) {
       lastError = error;
     }
   }
 
-  const fallback = compileWithLocalTools(text, metadata, sessionId, "local-safe-demo");
+  const fallback = withRetrieval(compileWithLocalTools(text, metadata, sessionId, "local-safe-demo"), focus);
   return Response.json({
     ...fallback,
     provider: lastError
