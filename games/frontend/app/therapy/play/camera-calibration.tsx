@@ -32,6 +32,23 @@ const HAND_BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10]
 const POSE_BONES = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[27,31],[24,26],[26,28],[28,32]];
 const POSE_MODEL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 
+function cameraAccessError(reason?: unknown) {
+  const insecure = typeof window !== "undefined" && !window.isSecureContext;
+  if (!navigator.mediaDevices?.getUserMedia || insecure) {
+    return "Camera needs a secure page. Open http://localhost:3000 in this browser instead of the network address.";
+  }
+  if (reason instanceof DOMException || reason instanceof Error) {
+    if (reason.name === "NotAllowedError") return "Camera permission was blocked. Allow the camera in the address bar and try again.";
+    if (reason.name === "NotFoundError") return "No camera was found.";
+    if (reason.name === "NotReadableError") return "The camera is already in use by another app.";
+    if (reason.name === "TypeError" || reason.message.includes("getUserMedia")) {
+      return "Camera needs a secure page. Open http://localhost:3000 in this browser instead of the network address.";
+    }
+    if (reason.message) return reason.message;
+  }
+  return "Camera could not start.";
+}
+
 const distance = (a: Landmark, b: Landmark) => Math.hypot(a.x - b.x, a.y - b.y);
 
 function landmarkConfidence(point?: Landmark) {
@@ -77,11 +94,17 @@ export default function CameraCalibration({
   onFrameRef.current = onFrame;
 
   useEffect(() => () => stop(), []);
+  useEffect(() => {
+    if (!navigator.mediaDevices?.getUserMedia || !window.isSecureContext) {
+      setError(cameraAccessError());
+    }
+  }, []);
 
   async function start() {
     setStatus("loading");
     setError("");
     try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new TypeError("getUserMedia");
       const { FilesetResolver, HandLandmarker, PoseLandmarker } = await import("@mediapipe/tasks-vision");
       const fileset = await FilesetResolver.forVisionTasks("/mediapipe/wasm");
       landmarkerRef.current = spec.tracking.mode === "hand"
@@ -105,7 +128,7 @@ export default function CameraCalibration({
       loop();
     } catch (reason) {
       stop();
-      setError(reason instanceof Error ? reason.message : "Camera could not start");
+      setError(cameraAccessError(reason));
       setStatus("off");
     }
   }
